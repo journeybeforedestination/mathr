@@ -1,9 +1,9 @@
 """Progress on disk. The only I/O in the core.
 
 New fields are read through `.get` with defaults, so a file written by an
-earlier version still loads. `Fact.key` is unchanged, which is why this needs
-no `version` bump: the warning in plan.md is about the key format, not about
-adding fields beside it.
+earlier version still loads. `Fact.key` is unchanged and needs no bump for
+that reason; `version` is 2 because the *level* key changed shape, from
+`<level>` to `<mode>/<level>`, which is a different format.
 """
 
 import json
@@ -13,9 +13,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
-from .domain.round import Round, Tally
+from .domain.round import Aim, Round, Tally
 
-VERSION = 1
+VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -34,12 +34,16 @@ class LevelRecord:
 
 @dataclass(frozen=True)
 class Progress:
+    #: Keyed `<mode>/<level>`. One record per level shared by every mode made
+    #: the badge on a level card a mixture of three different games, and
+    #: `best_seconds` a minimum across clocks that are not comparable.
     levels: Mapping[str, LevelRecord] = field(default_factory=dict)
     facts: Mapping[str, Tally] = field(default_factory=dict)
+    placements: Mapping[str, Aim] = field(default_factory=dict)
     settings: Settings = Settings()
 
-    def level(self, level_id: str) -> LevelRecord:
-        return self.levels.get(level_id, LevelRecord())
+    def level(self, mode_id: str, level_id: str) -> LevelRecord:
+        return self.levels.get(f"{mode_id}/{level_id}", LevelRecord())
 
 
 def default_path() -> Path:
@@ -52,9 +56,13 @@ def load(path: Path) -> Progress:
     try:
         raw = json.loads(path.read_text())
         settings = raw.get("settings", {})
+        # Every level record written before modes were recorded is the rocket's:
+        # it is the mode the arcade opens on, and the only one whose badge the
+        # level screen ever showed.
+        prefix = "rocket/" if int(raw.get("version", 1)) < 2 else ""
         return Progress(
             levels={
-                str(key): LevelRecord(
+                prefix + str(key): LevelRecord(
                     launches=int(value.get("launches", 0)),
                     practice=int(value.get("practice", 0)),
                     failures=int(value.get("failures", 0)),
@@ -72,6 +80,10 @@ def load(path: Path) -> Progress:
                     seconds=float(value.get("seconds", 0.0)),
                 )
                 for key, value in raw["facts"].items()
+            },
+            placements={
+                str(key): Aim(attempts=int(value["attempts"]), error=float(value["error"]))
+                for key, value in raw.get("placements", {}).items()
             },
             settings=Settings(
                 sound=bool(settings.get("sound", True)),
@@ -109,6 +121,10 @@ def save(path: Path, progress: Progress) -> None:
                 "seconds": round(tally.seconds, 2),
             }
             for key, tally in sorted(progress.facts.items())
+        },
+        "placements": {
+            bucket: {"attempts": aim.attempts, "error": round(aim.error, 2)}
+            for bucket, aim in sorted(progress.placements.items(), key=lambda item: int(item[0]))
         },
     }
     handle, temp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
@@ -151,5 +167,14 @@ def merge(progress: Progress, round: Round) -> Progress:
             answered=was.answered + tally.answered,
             seconds=was.seconds + tally.seconds,
         )
-    levels = {**progress.levels, round.level_id: _fold(progress.level(round.level_id), round)}
-    return Progress(levels=levels, facts=facts, settings=progress.settings)
+    placements = dict(progress.placements)
+    for bucket, aim in round.aims.items():
+        was = placements.get(bucket, Aim())
+        placements[bucket] = Aim(
+            attempts=was.attempts + aim.attempts, error=was.error + aim.error
+        )
+    key = f"{round.mode_id}/{round.level_id}"
+    levels = {**progress.levels, key: _fold(progress.level(round.mode_id, round.level_id), round)}
+    return Progress(
+        levels=levels, facts=facts, placements=placements, settings=progress.settings
+    )

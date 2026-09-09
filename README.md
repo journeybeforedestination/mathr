@@ -2,16 +2,20 @@
 
 A desktop math-fact game built for one specific second grader.
 
-Two games, one question pool. In **Rocket Builder**, every fact he gets right
+Three games, one question pool. In **Rocket Builder**, every fact he gets right
 bolts another part onto a rocket; every miss knocks the top part off. Ten parts
 on and it counts down and launches — but an alien saucer is closing in the whole
 time, and if the clock runs out first it takes the rocket instead. In **Tennis
 Match**, an opponent serves and the ball falls down the court; solving the
 problem before it lands swats it back. Ten returns wins, three balls past him
-loses.
+loses. In **Touchdown Drive**, every play is a throw and a catch: a yard
+downfield is called, he clicks where that number goes on the field, and then has
+to answer a math fact before the ball lands to secure the catch.
 
 The point is fluency: number bonds recalled fast enough to be useful, rather than
-counted out on fingers.
+counted out on fingers. The pass is the exception, and deliberately so — where
+a number sits on a line is the one thing here that cannot be answered from a
+memorised table.
 
 ```sh
 uv run mathr
@@ -19,7 +23,7 @@ uv run mathr
 
 ## Playing
 
-**Arcade → a cabinet → pick a level.** Both cabinets lead to the same level
+**Arcade → a cabinet → pick a level.** Every cabinet leads to the same level
 grid, and every level is unlocked from the start; there is no sequence to grind
 through.
 
@@ -56,6 +60,51 @@ Type the missing number on the on-screen keypad or the real keyboard, then
 - **A ball gets past him** → a point to the opponent, the number line for the
   fact he never answered, and that fact comes back three questions later.
   **Three points** loses the match.
+
+**Touchdown Drive**
+
+The clock is the rocket's: one bank, drained in real time, credited by a right
+answer. The field runs the full width of the top of the screen and everything he
+types is below it, which buys the line ten pixels a yard.
+
+Each play is a throw and then a catch:
+
+- **The throw.** A yard is called — *throw to the 37* — always between ten and
+  forty yards ahead of the ball, and there is no keypad. **Click where that
+  number goes.** Every clock stops while he aims, so the estimate is never a
+  race.
+- **Within six yards** the ball is in the air, and the called yard and the one he
+  threw to stay on the field side by side. **Wider** and it says INCOMPLETE: the
+  ball does not move, a fresh yard is called from the same spot, and one of three
+  attempts is gone. **Three incompletions is a turnover.**
+- **The catch.** With the ball up, a fact appears and a football grows in the
+  corner as its time runs out. Answer it in time and the catch is secured — the
+  ball is **spotted where the pass was caught**, so a short pass gains a little
+  and a deep one gains a lot. A wrong answer costs nothing while the ball is up:
+  the number line shows the route and everything, the ball included, freezes
+  until he types again.
+- **Too slow** → DROPPED. Nothing gained and nothing lost but the seconds. The
+  next call comes from the same spot with a **new fact** under it: the one that
+  got away goes back into the deck to be asked again later, and the answer box is
+  emptied so half of one answer cannot be submitted against the next question.
+- **A hundred yards** → touchdown. The last ten have to be run in with an
+  answer: the goal line is a labelled end of the number line, so a pass that
+  could reach it would be a free win.
+- **Clock empties, or three incompletions** → turnover, and *Try again*.
+
+Neither half of a play can be traded for the other. A placement he could confirm
+by guessing is not an estimate, and a fact he could answer without placing
+anything is the game he already has two cabinets of. The three attempts are what
+stops the line being clicked at idly until something sticks — and, unlike the
+clock, they are a cost he can see coming.
+
+Every finished play is held for a beat on the words CAUGHT / INCOMPLETE /
+DROPPED with both pennants still on the field, before the next yard is called.
+
+The field is bare: two goal lines, the 50, and nothing else. Yard stripes were
+tried and taken out — they are what a real field looks like, and they are also a
+benchmark to count along instead of a distance to judge. `STRIPE_EVERY = 5` in
+`shell/draw.py` puts them back.
 
 ### The levels
 
@@ -139,9 +188,9 @@ up. The
 ball's position on the court *is* the clock — it retreats to the opponent's
 baseline on a return, the same way the saucer retreats when the bank is
 credited. There is no head start and no banking ahead, so tennis is the harder
-of the two at the same level. The **Timer** toggle belongs to the rocket; a
-rally has no untimed form, because without a deadline the ball has nowhere to
-be.
+of the two at the same level. The **Timer** toggle belongs to the modes with a bank
+— the rocket and the drive; a rally has no untimed form, because without a
+deadline the ball has nowhere to be. An untimed drive still throws.
 
 ## Controls
 
@@ -151,7 +200,7 @@ be.
 | `Enter` / `OK` | submit |
 | `Backspace` / `<` | delete a digit |
 | `Escape` | back one screen; from the arcade, quit |
-| mouse | everything is clickable |
+| mouse | everything is clickable — and in Touchdown Drive the throw is *only* a click; the keyboard does nothing while one is called |
 
 The window is resizable and tiles happily — everything is laid out on a fixed
 1280×800 surface that is scaled and letterboxed into whatever size the window
@@ -172,13 +221,16 @@ bug guaranteed to end use of the program.
 
 ```json
 {
- "version": 1,
+ "version": 2,
  "settings": { "sound": true, "timer": true },
  "levels": {
-  "bridge": { "launches": 3, "practice": 1, "failures": 9, "best_seconds": 47.2 }
+  "rocket/bridge": { "launches": 3, "practice": 1, "failures": 9, "best_seconds": 47.2 }
  },
  "facts": {
   "15-7=8@result": { "right": 4, "wrong": 3, "answered": 7, "seconds": 31.2 }
+ },
+ "placements": {
+  "30": { "attempts": 4, "error": 21.5 }
  }
 }
 ```
@@ -189,10 +241,19 @@ because they cost almost nothing and cannot be reconstructed later: a mean of
 fact, which is exactly what a practice mode should surface first and exactly
 what a right/wrong count cannot see.
 
-One record per level, shared by both modes: `launches` counts a launch and a
-won match alike, and `best_seconds` is the fastest of either. The per-fact
-tallies were always mode-agnostic, and splitting the record would need a
-`version` bump for a number nobody has asked for yet.
+One record per level **per mode**, keyed `<mode>/<level>`. It was one record
+shared by every mode until a third arrived and made the badge on a level card a
+mixture of three different games — `launches` counting launches, won matches and
+touchdowns alike, and `best_seconds` a minimum across clocks that are not
+comparable. That is the `version` bump from 1 to 2: a v1 file's level records
+load under `rocket/`, which is a guess, and any tennis played before the split
+has inflated the rocket's numbers unrecoverably. The per-fact tallies were and
+remain mode-agnostic, which is right — a fact is a fact.
+
+`placements` accumulates every throw by decade of the called yard: attempts, and
+the summed absolute distance he was off. Bucketed because eleven buckets fill
+with usable data in a week and a hundred and one never do. Nothing reads it back
+yet, for the same reason as the per-fact tallies.
 
 `failures` is the number that says whether the pacing is right. If a level shows
 one launch against nine failures, the seconds-per-part for that level is wrong —

@@ -140,6 +140,48 @@ def _cheer():
     return _Shape(seconds, wave)
 
 
+def _catch():
+    """A completed pass: a soft thump, then a third rising off it. A reward,
+    which is why it is not `correct` — it has to feel bigger than an answer."""
+    seconds = 0.5
+
+    def wave(t):
+        thump = math.sin(2 * math.pi * 180 * t) * math.exp(-t * 22)
+        note = 523 if t < seconds * 0.45 else 659
+        rise = math.sin(2 * math.pi * note * t) * _envelope(t, seconds, attack=0.01)
+        return 0.7 * thump + 0.6 * rise
+
+    return _Shape(seconds, wave)
+
+
+def _throw():
+    """The ball leaving his hand: a short rising whoosh, so a good placement is
+    audibly *not* the catch it might still become."""
+    seconds = 0.26
+    rng = random.Random(13)
+    noise = [rng.uniform(-1, 1) for _ in range(2048)]
+
+    def wave(t):
+        share = t / seconds
+        air = noise[int(t * (3000 + 9000 * share)) % len(noise)]
+        return air * _envelope(t, seconds, attack=0.06)
+
+    return _Shape(seconds, wave)
+
+
+def _incomplete():
+    """A wide throw costs nothing, so this is dry and short — clearly not
+    `wrong`, which is a buzzer."""
+    seconds = 0.22
+    rng = random.Random(5)
+    noise = [rng.uniform(-1, 1) for _ in range(2048)]
+
+    def wave(t):
+        return noise[int(t * 12000) % len(noise)] * _envelope(t, seconds, attack=0.01)
+
+    return _Shape(seconds, wave)
+
+
 class Sounds:
     """Silent by construction if the mixer is unavailable."""
 
@@ -156,6 +198,9 @@ class Sounds:
                 "pock": _tone(_pock(), amplitude=0.45),
                 "drop": _tone(_drop(), amplitude=0.4),
                 "cheer": _tone(_cheer(), amplitude=0.4),
+                "catch": _tone(_catch(), amplitude=0.45),
+                "incomplete": _tone(_incomplete(), amplitude=0.25),
+                "throw": _tone(_throw(), amplitude=0.3),
             }
         except pygame.error:
             self._clips = {}

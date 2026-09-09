@@ -2,12 +2,22 @@ import json
 import random
 
 from mathr.domain.facts import LEVELS_BY_ID
-from mathr.domain.round import PARTS_TO_LAUNCH, Tally, apply, new_round, tick
+from mathr.domain.round import (
+    FOOTBALL,
+    PARTS_TO_LAUNCH,
+    TENNIS,
+    Aim,
+    Tally,
+    apply,
+    new_round,
+    place,
+    tick,
+)
 from mathr.storage import LevelRecord, Progress, Settings, load, merge, save
 
 
-def played(level_id="fives", timed=True, corrects=0, wrongs=0, seconds=0.0):
-    current = new_round(LEVELS_BY_ID[level_id], random.Random(0), timed=timed)
+def played(level_id="fives", timed=True, corrects=0, wrongs=0, seconds=0.0, **kwargs):
+    current = new_round(LEVELS_BY_ID[level_id], random.Random(0), timed=timed, **kwargs)
     if seconds:
         current, _ = tick(current, seconds)
     for _ in range(wrongs):
@@ -20,8 +30,9 @@ def played(level_id="fives", timed=True, corrects=0, wrongs=0, seconds=0.0):
 def test_round_trip(tmp_path):
     path = tmp_path / "progress.json"
     progress = Progress(
-        levels={"fives": LevelRecord(launches=3, practice=1, failures=2, best_seconds=41.5)},
+        levels={"rocket/fives": LevelRecord(launches=3, practice=1, failures=2, best_seconds=41.5)},
         facts={"3+2=5@b": Tally(4, 1, 5, 18.25)},
+        placements={"30": Aim(attempts=4, error=21.5)},
         settings=Settings(sound=False, timer=True),
     )
     save(path, progress)
@@ -57,15 +68,15 @@ def test_a_file_from_before_the_clock_still_loads(tmp_path):
         )
     )
     progress = load(path)
-    assert progress.level("fives") == LevelRecord(launches=3)
+    assert progress.level("rocket", "fives") == LevelRecord(launches=3)
     assert progress.facts["3+2=5@b"] == Tally(right=4, wrong=1, answered=0, seconds=0.0)
     assert progress.settings == Settings(sound=True, timer=True)
 
 
 def test_save_leaves_no_temp_files(tmp_path):
     path = tmp_path / "progress.json"
-    save(path, Progress(levels={"tens": LevelRecord(launches=1)}))
-    save(path, Progress(levels={"tens": LevelRecord(launches=2)}))
+    save(path, Progress(levels={"rocket/tens": LevelRecord(launches=1)}))
+    save(path, Progress(levels={"rocket/tens": LevelRecord(launches=2)}))
     assert [p.name for p in tmp_path.iterdir()] == ["progress.json"]
 
 
@@ -86,35 +97,75 @@ def test_merge_accumulates_fact_tallies():
 def test_a_launch_records_launch_and_best_time():
     finished = played(corrects=PARTS_TO_LAUNCH, seconds=2.5)
     after = merge(Progress(), finished)
-    record = after.level("fives")
+    record = after.level("rocket", "fives")
     assert record.launches == 1 and record.failures == 0
     assert record.best_seconds == finished.elapsed
 
 
 def test_best_time_only_improves():
-    before = Progress(levels={"fives": LevelRecord(launches=1, best_seconds=20.0)})
+    before = Progress(levels={"rocket/fives": LevelRecord(launches=1, best_seconds=20.0)})
     after = merge(before, played(corrects=PARTS_TO_LAUNCH, seconds=25.0))
-    assert after.level("fives").best_seconds == 20.0
+    assert after.level("rocket", "fives").best_seconds == 20.0
 
 
 def test_abduction_records_a_failure_and_no_best_time():
     current = played(corrects=2)
     current, _ = tick(current, 999)
     after = merge(Progress(), current)
-    assert after.level("fives") == LevelRecord(failures=1)
+    assert after.level("rocket", "fives") == LevelRecord(failures=1)
 
 
 def test_untimed_launches_are_counted_apart():
     after = merge(Progress(), played(timed=False, corrects=PARTS_TO_LAUNCH))
-    assert after.level("fives") == LevelRecord(launches=0, practice=1, best_seconds=None)
+    assert after.level("rocket", "fives") == LevelRecord(launches=0, practice=1, best_seconds=None)
 
 
 def test_walking_away_records_facts_but_no_launch():
     after = merge(Progress(), played(corrects=3))
-    assert after.level("fives") == LevelRecord()
+    assert after.level("rocket", "fives") == LevelRecord()
     assert sum(t.answered for t in after.facts.values()) == 3
 
 
 def test_settings_survive_a_merge():
     before = Progress(settings=Settings(sound=False, timer=False))
     assert merge(before, played(corrects=1)).settings == before.settings
+
+
+# --- modes keep their own records -------------------------------------------
+
+
+def test_a_v1_record_migrates_under_the_rocket(tmp_path):
+    """Rocket is the guess: it is the mode the arcade opens on, and the only
+    one whose badge a v1 level card ever showed."""
+    path = tmp_path / "progress.json"
+    path.write_text(
+        json.dumps({"version": 1, "levels": {"fives": {"launches": 3}}, "facts": {}})
+    )
+    assert set(load(path).levels) == {"rocket/fives"}
+
+
+def test_a_rocket_win_and_a_tennis_win_are_separate_records():
+    after = merge(Progress(), played(corrects=PARTS_TO_LAUNCH))
+    tennis = new_round(LEVELS_BY_ID["fives"], random.Random(0), rules=TENNIS, mode_id="tennis")
+    for _ in range(TENNIS.target):
+        tennis, _ = apply(tennis, tennis.current.answer)
+    after = merge(after, tennis)
+    assert after.level("rocket", "fives").launches == 1
+    assert after.level("tennis", "fives").launches == 1
+
+
+def test_placements_accumulate_by_bucket():
+    drive = new_round(
+        LEVELS_BY_ID["fives"], random.Random(0), rules=FOOTBALL, mode_id="football"
+    )
+    target = drive.placing
+    drive, _ = place(drive, target + 2)
+    bucket = str(target // 10 * 10)
+    after = merge(Progress(placements={bucket: Aim(attempts=1, error=5.0)}), drive)
+    assert after.placements[bucket] == Aim(attempts=2, error=7.0)
+
+
+def test_a_v2_file_without_placements_loads_empty(tmp_path):
+    path = tmp_path / "progress.json"
+    path.write_text(json.dumps({"version": 2, "levels": {}, "facts": {}}))
+    assert load(path).placements == {}

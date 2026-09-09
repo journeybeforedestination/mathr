@@ -2,7 +2,7 @@
 
 import pytest
 
-from mathr.shell.draw import DESIGN, fit, to_design, to_window
+from mathr.shell.draw import DESIGN, FIELD, fit, to_design, to_window
 
 WINDOWS = [DESIGN, (960, 1040), (620, 1400), (2560, 1440), (1000, 500)]
 
@@ -93,3 +93,71 @@ def test_the_player_stays_put_through_his_follow_through():
     assert 0.0 < volley.swing < 1.0
     volley.elapsed = 0.34
     assert volley.done and volley.position == (0.0, 0.0) and volley.swing == 0.0
+
+
+# --- the football field ------------------------------------------------------
+
+
+def test_a_yard_number_and_a_click_are_the_same_mapping():
+    from mathr.shell.draw import field_x, field_yards
+
+    for yards in (0, 1, 37, 50, 99, 100):
+        x = field_x(yards, 100)
+        assert field_yards((x, FIELD.centery), 100) == yards
+
+
+def test_the_field_sits_above_everything_he_types_on():
+    """Full width, so the line gets ten pixels a yard: it has to clear the
+    readout above it and the entry and keypad below."""
+    from mathr.shell.app import KEYPAD
+    from mathr.shell.draw import CATCH, DOWNFIELD, TIME_BAR
+
+    assert FIELD.top > TIME_BAR.bottom
+    assert FIELD.bottom < min(button.rect.top for button in KEYPAD)
+    assert FIELD.bottom < DOWNFIELD.entry.top and FIELD.bottom < CATCH.top
+    assert DOWNFIELD.entry.right < min(button.rect.left for button in KEYPAD)
+    assert CATCH.right < DOWNFIELD.entry.left
+
+
+def test_a_click_off_the_field_is_not_a_throw():
+    from mathr.shell.draw import field_yards
+
+    assert field_yards((FIELD.centerx, FIELD.top - 100), 100) is None
+    assert field_yards((FIELD.centerx, FIELD.bottom + 200), 100) is None
+
+
+def test_the_tolerance_is_wide_enough_to_click_at_all():
+    from mathr.domain.round import PLACE_MAX, PLACE_TOLERANCE
+    from mathr.shell.draw import field_x
+
+    span = field_x(PLACE_TOLERANCE, PLACE_MAX) - field_x(0, PLACE_MAX)
+    assert span >= 20  # a seven-year-old with a mouse
+
+
+# --- the cabinet at any height -----------------------------------------------
+
+
+def test_a_full_height_cabinet_is_exactly_what_it_always_was():
+    """The 2x2 grid halved the cabinets; scaling by the height the offsets were
+    drawn against is what keeps the original look at the original size."""
+    import pygame
+
+    from mathr.shell.draw import CABINET_HEIGHT, cabinet_parts
+
+    marquee, screen, panel = cabinet_parts(pygame.Rect(160, 190, 400, CABINET_HEIGHT))
+    assert (marquee.x, marquee.y, marquee.width, marquee.height) == (184, 210, 352, 62)
+    assert (screen.x, screen.y, screen.width, screen.height) == (190, 290, 340, 236)
+    assert (panel.x, panel.y, panel.width, panel.height) == (190, 546, 340, 60)
+
+
+def test_every_cabinet_in_the_grid_has_a_panel_with_height():
+    """Below about 380 the original absolute offsets gave the panel a negative
+    height, which pygame draws inverted or not at all."""
+    from mathr.shell.app import CABINETS
+    from mathr.shell.draw import cabinet_parts
+
+    for _, rect in CABINETS:
+        marquee, screen, panel = cabinet_parts(rect)
+        assert panel.height > 0
+        assert screen.bottom < panel.top < panel.bottom <= rect.bottom
+        assert rect.top < marquee.top and marquee.bottom < screen.top

@@ -227,11 +227,14 @@ def text(surface, font, value, center, colour=INK) -> pygame.Rect:
     return rect
 
 
-def draw_progress(surface, font, done: int, total: int, noun: str = "parts") -> None:
+def draw_progress(surface, font, done: int, total: int, noun: str = "parts", per: int = 1) -> None:
+    """One pip per part, and the count in whatever the part is worth: a
+    football part is ten yards, and "3 / 10 yards" would be a lie the field
+    standing next to it immediately contradicts."""
     for index in range(total):
         rect = pygame.Rect(700 + index * 46, 96, 34, 14)
         pygame.draw.rect(surface, GOOD if index < done else PANEL, rect, border_radius=7)
-    text(surface, font, f"{done} / {total} {noun}", (880, 60), DIM)
+    text(surface, font, f"{done * per} / {total * per} {noun}", (880, 60), DIM)
 
 
 TIME_BAR = pygame.Rect(700, 124, 10 * 46 - 12, 12)
@@ -485,23 +488,51 @@ def draw_trophy(surface, centre: tuple[int, int], scale: float = 1.0) -> None:
 # --- the arcade -------------------------------------------------------------
 
 
-def draw_cabinet(surface, title_font, rect: pygame.Rect, title: str, hovered: bool) -> pygame.Rect:
+CABINET_HEIGHT = 440  # what the offsets below were drawn against
+
+
+def cabinet_parts(rect: pygame.Rect) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect]:
+    """Marquee, screen and control panel, scaled to whatever height is given.
+
+    Four cabinets in a 2x2 grid are half as tall as two side by side, and the
+    original absolute offsets gave the panel a negative height below about 380
+    — which pygame draws inverted or not at all. Scaling by the height they
+    were drawn against reproduces the original cabinet exactly at 440.
+    """
+    scale = rect.height / CABINET_HEIGHT
+    marquee = pygame.Rect(rect.x + 24, rect.y + int(20 * scale), rect.width - 48, int(62 * scale))
+    screen = pygame.Rect(
+        rect.x + 30, marquee.bottom + int(18 * scale), rect.width - 60, int(236 * scale)
+    )
+    panel = pygame.Rect(
+        rect.x + 30,
+        screen.bottom + int(20 * scale),
+        rect.width - 60,
+        rect.bottom - screen.bottom - int(44 * scale),
+    )
+    return marquee, screen, panel
+
+
+def draw_cabinet(
+    surface, title_font, rect: pygame.Rect, title: str, hovered: bool, dimmed: bool = False
+) -> pygame.Rect:
     """A cabinet, returning the screen rect for the caller to fill with art."""
-    draw_card(surface, rect, CABINET, hovered)
-    marquee = pygame.Rect(rect.x + 24, rect.y + 20, rect.width - 48, 62)
-    pygame.draw.rect(surface, PANEL, marquee, border_radius=12)
-    text(surface, title_font, title, marquee.center, ACCENT if hovered else INK)
-    screen = pygame.Rect(rect.x + 30, marquee.bottom + 18, rect.width - 60, 236)
+    scale = rect.height / CABINET_HEIGHT
+    marquee, screen, panel = cabinet_parts(rect)
+    draw_card(surface, rect, CABINET, hovered, dimmed)
+    pygame.draw.rect(surface, SPACE if dimmed else PANEL, marquee, border_radius=12)
+    text(surface, title_font, title, marquee.center, DIM if dimmed else ACCENT if hovered else INK)
     pygame.draw.rect(surface, SPACE, screen, border_radius=10)
     pygame.draw.rect(surface, PANEL, screen, width=3, border_radius=10)
-    panel = pygame.Rect(rect.x + 30, screen.bottom + 20, rect.width - 60, rect.bottom - screen.bottom - 44)
+    if dimmed:
+        return screen
     pygame.draw.rect(surface, PANEL, panel, border_radius=10)
     for index in range(4):
         pygame.draw.circle(
             surface,
             (ACCENT, GOOD, BAD, HULL)[index],
-            (panel.x + 34 + index * 42, panel.centery),
-            11,
+            (panel.x + int((34 + index * 42) * scale), panel.centery),
+            max(3, int(11 * scale)),
         )
     return screen
 
@@ -516,7 +547,8 @@ def rocket_thumbnail(parts, height: int) -> pygame.Surface:
 
 def draw_mini_court(surface, rect: pygame.Rect, now: float) -> None:
     """The tennis cabinet's screen: a rally that never ends."""
-    inset = rect.inflate(-36, -30)
+    # Proportional: at half a cabinet's height a fixed inset is most of the screen.
+    inset = rect.inflate(-int(rect.width * 0.09), -int(rect.height * 0.13))
     corners = [
         (inset.centerx - inset.width * 0.22, inset.top),
         (inset.centerx + inset.width * 0.22, inset.top),
@@ -531,14 +563,290 @@ def draw_mini_court(surface, rect: pygame.Rect, now: float) -> None:
     pygame.draw.circle(surface, BALL, (int(x), int(y)), int(4 + 9 * travel))
 
 
+# --- the football field -----------------------------------------------------
+# Full width across the top, with everything he types below it. The line gets
+# ten pixels a yard that way instead of five, which is what makes a placement a
+# judgement rather than a guess at which half of a stripe he is on.
+#
+# Nothing marks it but the two goal lines and the 50. Yard stripes were tried
+# and taken out again: they are what a real field looks like, and they are also
+# a benchmark to count along instead of a distance to judge. `STRIPE_EVERY = 5`
+# puts them back.
+
+FIELD = pygame.Rect(60, 150, 1160, 236)
+END_ZONE = 60  # beyond each goal line, so 0 and 100 are not against the edge
+GRASS = (26, 78, 52)
+GRASS_DARK = (18, 58, 40)
+STRIPE = (44, 104, 72)  # the yard lines, in green: present, not shouting
+STRIPE_TEN = (58, 124, 88)
+STRIPE_EVERY = None  # yards between stripes; None for the bare line
+
+PIGSKIN = (146, 84, 48)
+PIGSKIN_DARK = (104, 58, 32)
+JERSEY = (232, 236, 248)
+JERSEY_DARK = (60, 96, 190)
+SKIN = (222, 176, 132)
+
+#: Below the field: the ball coming in, then the question, then the keypad.
+CATCH = pygame.Rect(66, 400, 330, 392)
+#: A finished play owns the whole band — the keypad is not drawn while it shows.
+VERDICT = pygame.Rect(60, 400, 1160, 392)
+
+RUNNER_HEIGHT = 46  # feet on the yard line, so the sprite reads as standing on it
+
+
+def _football(surface, centre: tuple[float, float], size: float) -> None:
+    """Brown, with the white ring and the laces — at any size down to a pip."""
+    box = pygame.Rect(0, 0, max(3, int(size)), max(2, int(size * 0.62)))
+    box.center = (int(centre[0]), int(centre[1]))
+    pygame.draw.ellipse(surface, PIGSKIN, box)
+    pygame.draw.ellipse(surface, PIGSKIN_DARK, box, width=max(1, int(size * 0.05)))
+    if size < 26:
+        return  # below this the markings are one grey smear
+    thick = max(1, int(size * 0.045))
+    for side in (-1, 1):  # the rings around each end
+        x = box.centerx + side * box.width * 0.3
+        pygame.draw.line(
+            surface, INK, (x, box.centery - box.height * 0.24), (x, box.centery + box.height * 0.24), thick
+        )
+    pygame.draw.line(
+        surface, INK, (box.centerx - box.width * 0.15, box.centery),
+        (box.centerx + box.width * 0.15, box.centery), thick
+    )
+    for index in (-1, 0, 1):  # the laces
+        x = box.centerx + index * box.width * 0.09
+        pygame.draw.line(
+            surface, INK, (x, box.centery - box.height * 0.13), (x, box.centery + box.height * 0.13), thick
+        )
+
+
+def _runner(surface, x: int, feet_y: int, height: float, now: float, carrying: bool = True) -> None:
+    """The ball carrier, as the arcade football games drew him: eight blocks
+    tall, two frames of run cycle, facing the end zone he is running at.
+
+    Rectangles rather than curves. At this size a rounded figure is a blob, and
+    the blocky one is legible down to a cabinet screen — which is where the same
+    sprite runs. The helmet is narrower than the shoulders and the legs are
+    narrower again, because that silhouette is what says *football player* at
+    fifty pixels tall; colour alone does not.
+
+    `carrying` off is the receiver waiting under a pass: both arms up, and
+    nothing in them yet.
+    """
+    unit = height / 8
+    stride = int(now * 7) % 2  # two frames, swapped fast enough to read as a run
+    top = feet_y - height + (unit * 0.3 if stride else 0)
+
+    def block(left, up, wide, tall, colour) -> None:
+        pygame.draw.rect(
+            surface,
+            colour,
+            pygame.Rect(
+                int(x + left * unit),
+                int(top + up * unit),
+                max(1, int(wide * unit)),
+                max(1, int(tall * unit)),
+            ),
+        )
+
+    # Legs first, so the jersey overlaps them at the hip. One leg is planted and
+    # the other is off the ground in both frames; they swap.
+    if stride:
+        block(-1.7, 5.0, 1.2, 3.0, JERSEY_DARK)
+        block(0.5, 5.0, 1.2, 2.2, JERSEY_DARK)
+        block(0.5, 6.6, 1.9, 0.8, JERSEY_DARK)  # the lifted knee, driving forward
+    else:
+        block(-1.6, 5.0, 1.2, 2.2, JERSEY_DARK)
+        block(0.5, 5.0, 1.2, 3.0, JERSEY_DARK)
+        block(-2.6, 6.7, 1.9, 0.8, JERSEY_DARK)  # and trailing behind
+
+    block(-1.9, 2.1, 3.8, 2.9, JERSEY)  # shoulders, wider than the helmet
+    block(-1.9, 3.1, 3.8, 0.6, JERSEY_DARK)  # the stripe across the numbers
+    if carrying:
+        # The arm tucks the ball against the ribs, which is what makes him a
+        # ball carrier rather than a man standing on a line.
+        block(1.4, 3.4, 1.3, 0.8, SKIN)
+        _football(surface, (x + 2.9 * unit, top + 3.8 * unit), 1.9 * unit)
+    else:
+        for side in (-2.6, 1.9):  # both arms up, waiting for it
+            block(side, 0.6, 0.7, 1.9, SKIN)
+    block(-1.3, 0.1, 2.9, 2.1, BAD)  # helmet, set forward on the shoulders
+    block(0.9, 1.2, 1.4, 0.5, JERSEY)  # facemask, on the side he is running toward
+
+
+def field_x(yards: float, span: int) -> int:
+    """Where a yard number sits across the field. The one mapping, both ways."""
+    playable = FIELD.width - 2 * END_ZONE
+    return int(FIELD.left + END_ZONE + playable * max(0.0, min(1.0, yards / span)))
+
+
+def field_yards(position: tuple[int, int], span: int) -> int | None:
+    """A click in design space, as a yard number. None if it missed the field.
+
+    Vertically generous: he is aiming at a horizontal position, and a throw
+    that reads as on the line should not be lost for being an inch high.
+    """
+    x, y = position
+    if not FIELD.inflate(0, 40).collidepoint(x, y):
+        return None
+    playable = FIELD.width - 2 * END_ZONE
+    # Clamped: the end zones are inside the field rect, and a click in one is
+    # a throw to the goal line rather than a throw off the line entirely.
+    return max(0, min(span, round(span * (x - FIELD.left - END_ZONE) / playable)))
+
+
+def _pennant(surface, x: int, y: int, colour, size: int = 10) -> None:
+    pygame.draw.polygon(surface, colour, [(x, y), (x - size, y - size), (x + size, y - size)])
+
+
+def draw_field(surface, label_font, span: int, yards: int, throw, now: float) -> None:
+    """The drive: the line, and the ball carrier standing where it has reached.
+
+    `throw` is (aimed, called) from the last placement, held for a moment so he
+    sees the two side by side. That comparison is the whole teaching moment;
+    without it a wide throw is only a noise.
+    """
+    pygame.draw.rect(surface, GRASS, FIELD, border_radius=8)
+    for zone in (
+        pygame.Rect(FIELD.left, FIELD.top, END_ZONE, FIELD.height),
+        pygame.Rect(FIELD.right - END_ZONE, FIELD.top, END_ZONE, FIELD.height),
+    ):
+        pygame.draw.rect(surface, GRASS_DARK, zone, border_radius=8)
+
+    line_y = FIELD.centery + 14
+    left, right = field_x(0, span), field_x(span, span)
+    if STRIPE_EVERY:
+        for value in range(STRIPE_EVERY, span, STRIPE_EVERY):
+            x = field_x(value, span)
+            ten = value % 10 == 0
+            pygame.draw.line(
+                surface,
+                STRIPE_TEN if ten else STRIPE,
+                (x, FIELD.top + 12),
+                (x, FIELD.bottom - 12),
+                2 if ten else 1,
+            )
+    pygame.draw.line(surface, COURT_LINE, (left, line_y), (right, line_y), 4)
+    for value in (0, span):
+        x = field_x(value, span)
+        pygame.draw.line(surface, COURT_LINE, (x, FIELD.top + 16), (x, FIELD.bottom - 52), 5)
+        text(surface, label_font, str(value), (x, FIELD.bottom - 26), COURT_LINE)
+    middle = field_x(span // 2, span)
+    pygame.draw.line(surface, COURT_LINE, (middle, line_y - 22), (middle, line_y + 22), 3)
+
+    _runner(surface, field_x(yards, span), line_y + 3, RUNNER_HEIGHT, now)
+
+    if throw is not None:
+        aimed, called = throw
+        _pennant(surface, field_x(called, span), line_y - 26, GOOD)
+        _pennant(surface, field_x(aimed, span), line_y + 38, INK)
+        pygame.draw.line(
+            surface,
+            INK,
+            (field_x(aimed, span), line_y + 28),
+            (field_x(called, span), line_y - 16),
+            2,
+        )
+
+
+def draw_gridiron(surface, rect: pygame.Rect, now: float) -> None:
+    """The football cabinet's screen: the same runner, never tackled."""
+    inset = rect.inflate(-int(rect.width * 0.09), -int(rect.height * 0.13))
+    pygame.draw.rect(surface, GRASS, inset, border_radius=6)
+    pygame.draw.line(
+        surface, COURT_LINE, (inset.centerx, inset.top), (inset.centerx, inset.bottom), 2
+    )
+    for side in (inset.left + 6, inset.right - 6):
+        pygame.draw.line(surface, COURT_LINE, (side, inset.top), (side, inset.bottom), 3)
+    share = (now * 0.28) % 1.0
+    _runner(
+        surface,
+        int(inset.left + inset.width * share),
+        inset.centery + int(inset.height * 0.2),
+        inset.height * 0.4,
+        now,
+    )
+
+
+def draw_attempts(surface, font, adrift: int, lives: int) -> None:
+    """Incomplete passes, under the Back button and above the field.
+
+    Filled from the left as they are spent, the same reading as the tennis
+    scoreboard: what is left is what is not red yet.
+    """
+    text(surface, font, "incomplete", (108, 128), DIM)
+    for index in range(lives):
+        pygame.draw.circle(surface, BAD if index < adrift else PANEL, (210 + index * 36, 128), 12)
+
+
+def draw_call(surface, font, label_font, target: int, rect=CATCH) -> None:
+    """The yard he is being asked for, where his hands are about to be."""
+    text(surface, label_font, "throw to the", (rect.centerx, rect.top + 60), DIM)
+    text(surface, font, str(target), (rect.centerx, rect.top + 140), ACCENT)
+    text(surface, label_font, "click the field", (rect.centerx, rect.top + 220), DIM)
+
+
+def draw_verdict(surface, font, label_font, word: str, colour, aside: str, rect=VERDICT) -> None:
+    """How the play ended, held for a beat before the next call.
+
+    The beat is the point: the two pennants are still on the field, and a fresh
+    number appearing beside them would be read as pointing at one of them.
+    """
+    text(surface, font, word, (rect.centerx, rect.top + 130), colour)
+    text(surface, label_font, aside, (rect.centerx, rect.top + 196), DIM)
+
+
+def draw_incoming(surface, closeness: float, now: float, rect=CATCH) -> None:
+    """The pass on its way down, and the receiver under it.
+
+    It grows as its time runs out — the same reading as the saucer, and for the
+    same reason: he is looking at the keypad, and a thing getting bigger in the
+    corner of his eye is the only clock he will notice.
+    """
+    close = max(0.0, min(1.0, closeness))
+    feet = rect.bottom - 30
+    _runner(surface, rect.centerx, feet, 108, now, carrying=False)
+    hands = feet - 116
+    _football(
+        surface,
+        (rect.centerx, rect.top + 40 + (hands - rect.top - 40) * close * close),
+        16 + 74 * close,
+    )
+
+
 # --- the number line --------------------------------------------------------
-# The picture drawn on a miss. It gets the left half, which is free in both
-# modes: the rocket sits at x 110-410 behind it, the court spans x 75-625, and
-# the keypad at x >= 700 stays clear — which matters, because in tennis he
+# The picture drawn on a miss. It gets the left half, which every mode leaves
+# to it: the rocket sits at x 110-410 behind it, the court spans x 75-625, the
+# field x 80-660, and the keypad at x >= 700 stays clear — which matters, because in tennis he
 # retypes the same answer while the hint is up.
 
 HINT_BOX = pygame.Rect(60, 220, 600, 420)
 HINT_MARGIN = 56  # room for the end labels, which sit under the outermost dots
+
+
+@dataclass(frozen=True)
+class Layout:
+    """Where the words go on the play screen.
+
+    Two of the three modes draw their art on the left and type on the right;
+    football's field runs the whole width, so everything it types sits under the
+    field instead, and its hint lands over the field's left half — which is free
+    for it, because a hint stops the ball dead anyway.
+    """
+
+    prompt: tuple[int, int]
+    entry: pygame.Rect
+    hint: pygame.Rect
+    banner: tuple[int, int]  # how the round ended; its one line of detail sits below
+
+
+CLASSIC = Layout((940, 210), pygame.Rect(840, 280, 200, 96), HINT_BOX, (910, 320))
+DOWNFIELD = Layout(
+    (516, 432),
+    pygame.Rect(416, 466, 200, 96),
+    pygame.Rect(60, 150, 620, 236),
+    (390, 500),  # left of the Try again row, and clear of the field above it
+)
 
 
 def _hint_positions(strategy) -> tuple[int, ...]:

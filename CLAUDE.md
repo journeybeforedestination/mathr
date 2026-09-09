@@ -24,14 +24,15 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 
 - **`domain/` is pure.** No pygame, no I/O, no module-level `random` —
   randomness arrives as an injected `random.Random` so tests are deterministic.
-- **`domain/round.py` knows `parts: int`, a bank of seconds and a `Rules`
-  bundle, and nothing about rockets, aliens or tennis balls.** Part names,
-  coordinates and art live in `shell/draw.py`. This is the seam that lets both
-  modes reuse every level; the moment the reducer imports a part name, the next
+- **`domain/round.py` knows `parts: int`, a bank of seconds, a span with a
+  tolerance on it, and a `Rules` bundle — and nothing about rockets, aliens,
+  tennis balls or footballs.** Part names, coordinates and art live in
+  `shell/draw.py`. This is the seam that lets every mode reuse every level; the moment the reducer imports a part name, the next
   mode has to fake one or fork it.
-- **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`) says what the
-  clock does, what a wrong answer costs, and what an empty clock means. Tennis
-  built as a pure renderer over `ROCKET` compiles, draws, and plays as a
+- **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`, `FOOTBALL`)
+  says what the clock does, what a wrong answer costs, what an empty clock
+  means, and whether the round stops every so often to ask for a placement.
+  Tennis built as a pure renderer over `ROCKET` compiles, draws, and plays as a
   different game — the walk-through with real numbers is in `plan.md`, *The
   load-bearing decision*.
 - **Pacing is a rule, so the clock is in the domain** — a pure
@@ -49,19 +50,22 @@ src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
     facts.py      Fact, Question, Strategy, Level, the seven enumerated pools
-    round.py      Round, Rules, Tally, Outcome, new_round / apply / tick / dismiss
+    round.py      Round, Rules, Tally, Aim, Outcome,
+                  new_round / apply / tick / dismiss / place
   storage.py      Progress, Settings, LevelRecord; load / save / merge
   shell/
     app.py        App: event loop, Mode, three screens, all the wiring
-    draw.py       palette, rocket, alien, court, cabinets, buttons, number line,
-                  the transform
-    audio.py      eight synthesized clips, no asset files
+    draw.py       palette, rocket, alien, court, field, runner, cabinets,
+                  buttons, number line, Layout, the transform
+    audio.py      eleven synthesized clips, no asset files
 tests/
   test_facts.py   pool contents, key stability, both orientations
   test_round.py   parts, re-queue, both win conditions
   test_clock.py   the time bank and the rally deadline
+  test_place.py   the placement: when it is due, what it costs, what it stops
   test_storage.py round-trip, corruption, merge, backward compatibility
-  test_scaling.py the design-surface transform, threat closeness, court geometry
+  test_scaling.py the design-surface transform, threat closeness, court and
+                  field geometry, the cabinet at any height
   test_select.py  the deck weighting, and that an unweighted deck never moved
 ```
 
@@ -96,6 +100,15 @@ These are the dials, and they are meant to be turned after watching him play.
 | `TENNIS.target` | `domain/round.py` | 10 | returns needed to win |
 | `WEIGHT_FLOOR` | `domain/round.py` | 0.5 | how far a fast fact sinks in the deck |
 | `WEIGHT_CEILING` | `domain/round.py` | 4.0 | and how far one slow fact can rise |
+| `PLACE_MAX` | `domain/round.py` | 100 | the span of the field, in yards |
+| `PLACE_TOLERANCE` | `domain/round.py` | 6 | how far off still completes the pass |
+| `PLACE_LIVES` | `domain/round.py` | 3 | wide throws before a turnover |
+| `PLACE_GAIN_MIN` | `domain/round.py` | 10 | nearest a called yard can be |
+| `PLACE_GAIN_MAX` | `domain/round.py` | 40 | and furthest |
+| `CATCH_PARTS` | `domain/round.py` | 1.5 | how long the catch has, in problems |
+| `THROW_HOLD` | `shell/app.py` | 1.3s | how long a finished play is held |
+| `RUNNER_HEIGHT` | `shell/draw.py` | 46 | the ball carrier, in design pixels |
+| `STRIPE_EVERY` | `shell/draw.py` | `None` | yard stripes, in yards; `None` is the bare line |
 | `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 / 5 | pace, per level |
 
 `seconds_per_part` is the only per-level number; start and cap derive from it
@@ -125,9 +138,102 @@ boundary — nothing downstream may see window coordinates. Symptom if this is
 ever bypassed: clicks are accurate near the top-left and drift further out,
 which reads as "sloppy hitboxes" and never as a scaling bug.
 
+**A pending placement stops every clock, the way a hint does.** `Round.placing`
+is *derived*, never stored. A stored one would have to be written on every path
+that could clear it — both branches of `apply`, `place`, the lapse in `tick` —
+and a single missed path is a throw that never appears or one that appears
+twice, with nothing raising. `tick` returns early while it is set, so
+`seconds_left`, `on_current` and `elapsed` stop together and aiming time never
+reaches `Tally.seconds` — which is the deck weighting's input. `warn` needs the
+same gate as it does for `hint`, for the identical reason.
+
+**A placement is a claim, not a gain.** `place` puts a good one in
+`Round.pending` and moves nothing; the next answer either confirms it (`apply` →
+`SECURED`, and the marker jumps to where it was called) or fails to before
+`pending_left` runs out (`tick` → `LAPSED`, and it comes to nothing). Two skills
+per play, and neither can be traded for the other: a placement he could confirm
+by guessing is not an estimate, and a fact with no placement under it is the
+mode he already has two of.
+
+**A placement is due whenever none is in the air.** `placing` reads nothing but
+`rules.places`, `over`, `hint`, `pending` and the room left ahead of the marker —
+not `asked`, and not how many have been taken. A wide one comes straight back as
+another attempt from the same spot; a good one is followed by the answer that
+confirms it and then by the next call. The only question the shell ever asks is
+"is one due", and the only questions he answers are the ones under a placement —
+except inside the last part, where there is nowhere ahead to aim and the rest is
+run in.
+
+**A lapse takes the question with it, and the shell clears the box.** `tick`
+advances the queue on the frame a placement lapses and re-queues the fact at
+`RETRY_GAP`, exactly as a ball past him does in tennis — otherwise the next
+placement is confirmed by the fact he was halfway through typing, and the digits
+he had already entered are still sitting in the box waiting to be submitted
+against a question that has moved on. `App.update` clears `play.entry` on the
+same frame for the second half of that.
+
+**A lapse carries no hint**, unlike every other way of running out of time here.
+The next thing it asks for is a click on the field, and a hint can only be put
+away by typing; a click that dismissed one would also be a throw, aimed wherever
+he happened to be reading. The verdict banner is the feedback instead.
+
+**A wide placement costs an attempt, and `place_lives` of them end the round.**
+`place` returns LOST on the third, not ADRIFT, and sets `failed` — the shell's
+`throw` hands that straight to `lose`, which owns the failure screen and its
+clip. Without the attempt counter the line can be clicked at idly until
+something sticks, which is the one way to play this mode without estimating.
+
+**A wrong answer under a pending placement plays by the rally's rules, not the
+mode's.** No part lost, the queue untouched, the question still up — even though
+`FOOTBALL` sets `wrong_costs_part` and `wrong_advances`. The hint it raises
+stops every clock including `pending_left`, so he reads the number line with the
+ball held exactly where it was, which is the same bargain tennis makes.
+
+**A placement target is always ahead of the marker, and a good one moves the
+marker to it.** In a placement mode the line and the parts bar are the same
+axis: one part covers `PLACE_MAX // rules.target` of the line. `placing` adds a
+drawn offset to `parts * spot`, so it can never call a yard behind the ball —
+which played as a pass thrown backwards down the field, a mechanic that works
+while the metaphor around it is a lie. Inside the last part there is nowhere
+ahead to aim and `placing` is None: the goal line is a *labelled* end of the
+line, so a placement that could reach it would be a free win every time.
+
+**The hint wins over a due placement.** A wrong answer raises both at once; the `hint is not None` clause in `placing` settles it in
+the domain, and `dismiss` then makes the throw live with no extra code. If the
+shell arbitrated instead, that would be a rule in the shell.
+
+**A keystroke must not resolve or dismiss a placement.** `press` returns early
+while `placing` is set. Elsewhere a keystroke dismissing a hint is deliberate —
+losing the first digit of an answer reads as a dropped key — but here the click
+*is* the estimate, and a placement resolved by the keyboard records an aim he
+never made.
+
+**Placement targets are drawn in `new_round`, never in a reducer.** `tick`,
+`apply` and `place` take no rng, and two tests pin shuffle determinism per seed.
+A mode without placements draws none, so its consumption of the rng is exactly
+what it was.
+
+**`render_play` dispatches through a dict, not an `if`.** It used to be
+`if rocket: … else: court`, so a mode added to `MODES` without a renderer drew
+as tennis — it compiled, it drew, and nothing raised. The remaining
+`self.mode == "rocket"` checks are rocket art (parts falling, the beam, the
+countdown) and fail safe: a mode that is not the rocket simply does not take
+them.
+
+**A dimmed cabinet must not be clickable.** The `click` loop skips the `"soon"`
+entry in `CABINETS`; without that it would set `self.mode` to a mode that does
+not exist and `App.game` would raise a `KeyError` on the next frame.
+
+**`draw_cabinet`'s offsets scale with `rect.height`.** They were absolute, and
+below about 380 the control panel got a negative height, which pygame draws
+inverted or not at all — which is what the 2x2 grid would have done. `cabinet_parts`
+divides by `CABINET_HEIGHT`, and a test pins that h=440 is unchanged.
+
 **`Fact.key` is a storage format.** It keys accumulated per-fact data in a file
 that outlives the code. Changing its shape orphans every count already recorded
-and needs a `version` bump plus a migration. Adding *fields beside it* is fine —
+and needs a `version` bump plus a migration. `VERSION` is 2 for a different
+format — the `levels` key, now `<mode>/<level>` — which `Fact.key` is unaffected
+by. Adding *fields beside it* is fine —
 everything after `right`/`wrong` is read through `.get` with a default, which is
 why adding the clock needed no version bump. `test_a_file_from_before_the_clock_still_loads`
 pins that.
@@ -216,11 +322,14 @@ level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD` in
 `app.py`), so a fourth row needs a layout decision, not just an id in a tuple.
 Update `test_pool_sizes` — the `everything` total moves too.
 
-**A third game mode.** Add a `Rules` to `domain/round.py` and a `Mode` to
-`MODES` in `app.py` (title, clip map, nouns, hold times), a cabinet rect in
-`CABINETS`, and a renderer. Ask first whether its clock is a bank or a deadline:
-if neither `ROCKET` nor `TENNIS` fits, `Rules` gains a dial rather than the
-shell gaining a rule.
+**A fourth game mode.** Add a `Rules` to `domain/round.py` and a `Mode` to
+`MODES` in `app.py` (title, clip map, a `draw.Layout`, noun and what a part is
+worth in it, hold times, `rally` / `warns`), a renderer in the `render_play` dispatch, its clips
+in `audio.py`, and take the `"soon"` cabinet's rect in `CABINETS` — the grid is
+full at four, so a fifth is a layout decision, not an entry in a tuple. Ask
+first whether its clock is a bank or a deadline, and whether it interrupts
+itself: if none of `ROCKET`, `TENNIS` or `FOOTBALL` fits, `Rules` gains a dial
+rather than the shell gaining a rule.
 
 ## Testing, and what testing cannot reach
 

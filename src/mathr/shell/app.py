@@ -9,6 +9,8 @@ import pygame
 
 from ..domain.facts import LEVELS, LEVELS_BY_ID
 from ..domain.round import (
+    FOOTBALL,
+    PLACE_MAX,
     ROCKET,
     TENNIS,
     Outcome,
@@ -17,6 +19,7 @@ from ..domain.round import (
     apply,
     dismiss,
     new_round,
+    place,
     tick,
 )
 from ..storage import LevelRecord, Progress, load, merge, save
@@ -30,6 +33,15 @@ PAST_FLIGHT = 0.5  # and the one that got past him, on its way out
 LIFTOFF = 2.6
 FLASH_TIME = 0.45
 ABDUCT_BEAM = 1.6
+THROW_HOLD = 1.3  # how long a finished play is held before the next call
+
+#: What a placement's end says, and in what colour. Held for `THROW_HOLD` with
+#: the pennants still up, which is also why the next call cannot be clicked yet.
+VERDICTS = {
+    Outcome.SECURED: ("CAUGHT!", draw.GOOD, "the ball is on the {units}"),
+    Outcome.ADRIFT: ("INCOMPLETE", draw.BAD, "same spot, throw again"),
+    Outcome.LAPSED: ("DROPPED", draw.BAD, "too slow to bring it in"),
+}
 ROCKET_HEART = (draw.ROCKET_ORIGIN[0] + draw.BODY_X, draw.ROCKET_ORIGIN[1] + 300)
 
 
@@ -41,17 +53,26 @@ class Mode:
     because `Sounds.play` returns silently on a name it does not know — a clip
     keyed by an enum value goes quiet the day the enum is renamed, and nothing
     anywhere raises.
+
+    `rally` and `warns` are here rather than read off the mode id because both
+    gate behaviour, not art: a mode that answers the wrong way to either plays
+    a different game while drawing correctly.
     """
 
     id: str
     title: str
     rules: Rules
     clips: Mapping[Outcome, str]
+    layout: draw.Layout  # where the prompt, the entry box and a hint go
     noun: str
+    per_part: int  # what one part is worth, in `noun`
     won: str
     lost: str
+    lost_line: str  # formatted with parts and units
     win_hold: float
     lose_hold: float  # before *Try again* appears
+    rally: bool = False  # a ball flies between questions, and the clock waits
+    warns: bool = False  # the bank pulses as it empties
 
 
 MODES = {
@@ -65,11 +86,15 @@ MODES = {
             Outcome.WON: "launch",
             Outcome.LOST: "abducted",
         },
+        draw.CLASSIC,
         "parts",
+        1,
         "BLAST OFF!",
         "ABDUCTED!",
+        "you got {units} parts on",
         COUNTDOWN + LIFTOFF,
         ABDUCT_BEAM,
+        warns=True,
     ),
     "tennis": Mode(
         "tennis",
@@ -82,19 +107,51 @@ MODES = {
             Outcome.WON: "cheer",
             Outcome.LOST: "drop",
         },
+        draw.CLASSIC,
         "returns",
+        1,
         "YOU WIN!",
         "GAME OVER",
+        "you returned {units}",
         2.8,
         0.7,
+        rally=True,
+    ),
+    "football": Mode(
+        "football",
+        "Touchdown Drive",
+        FOOTBALL,
+        {
+            Outcome.CORRECT: "correct",
+            Outcome.WRONG: "wrong",
+            Outcome.PLACED: "throw",  # in the air, not yet caught
+            Outcome.ADRIFT: "incomplete",
+            Outcome.SECURED: "catch",
+            Outcome.LAPSED: "drop",
+            Outcome.WON: "cheer",
+            Outcome.LOST: "abducted",
+        },
+        draw.DOWNFIELD,
+        "yards",
+        10,  # a part is ten yards, so the readout and the field agree
+        "TOUCHDOWN!",
+        "TURNOVER",
+        "you reached the {units}",
+        2.8,
+        0.7,
+        warns=True,
     ),
 }
 
 BACK = Button(pygame.Rect(40, 40, 150, 64), "Back", "back")
 
+#: Two rows of two. The fourth is drawn and never clicked — see `click`, which
+#: skips it, and `draw_card`, which will not hover it.
 CABINETS = (
-    ("rocket", pygame.Rect(160, 190, 400, 440)),
-    ("tennis", pygame.Rect(720, 190, 400, 440)),
+    ("rocket", pygame.Rect(160, 186, 400, 220)),
+    ("tennis", pygame.Rect(720, 186, 400, 220)),
+    ("football", pygame.Rect(160, 420, 400, 220)),
+    ("soon", pygame.Rect(720, 420, 400, 220)),
 )
 
 MENU_BUTTONS = (
@@ -190,6 +247,8 @@ class Play:
     since_failure: float | None = None
     warn_left: float = 0.0
     volley: Volley | None = None
+    throw: tuple[int, int] | None = None  # (aimed, called), from the last placement
+    throw_left: float = 0.0
 
 
 class App:
@@ -215,7 +274,9 @@ class App:
             "tiny": pygame.font.SysFont(None, 30),
         }
         self.parts = draw.render_parts()
-        self.thumbnail = draw.rocket_thumbnail(self.parts, 200)
+        # Sized from the cabinet rather than a constant: the screen is a fixed
+        # share of the cabinet's height, and the grid halved it.
+        self.thumbnail = draw.rocket_thumbnail(self.parts, int(CABINETS[0][1].height * 0.45))
         self.stars = draw.make_stars(self.rng)
         self.sounds = Sounds()
         self.sounds.muted = not self.progress.settings.sound
@@ -281,7 +342,7 @@ class App:
     def click(self, position: tuple[int, int]) -> None:
         if self.screen == "menu":
             for mode_id, rect in CABINETS:
-                if rect.collidepoint(position):
+                if mode_id != "soon" and rect.collidepoint(position):
                     self.mode = mode_id
                     self.screen = "levels"
             for button in MENU_BUTTONS:
@@ -300,6 +361,8 @@ class App:
                 for button in FAIL_BUTTONS:
                     if button.rect.collidepoint(position):
                         self.fail_action(button.value)
+            elif self.play is not None and self.play.round.placing is not None:
+                self.throw(position)
             else:
                 for button in KEYPAD:
                     if button.rect.collidepoint(position):
@@ -363,6 +426,7 @@ class App:
                 timed=timed,
                 rules=mode.rules,
                 history=self.progress.facts,
+                mode_id=mode.id,
             )
         )
         self.screen = "play"
@@ -377,6 +441,11 @@ class App:
     def press(self, value: str) -> None:
         play = self.play
         if play is None or play.round.over:
+            return
+        if play.round.placing is not None:
+            # The click *is* the estimate. A key that resolved or dismissed a
+            # placement would record an aim he never made, and typing an answer
+            # here would queue it against a question hidden behind the throw.
             return
         # The keystroke that puts the hint away is also entry: he is already
         # typing the answer, and losing that first digit reads as a dropped key.
@@ -394,18 +463,47 @@ class App:
         if not play.entry:
             return
         before = play.round.parts
-        struck = self.ball(play) if self.mode == "tennis" else None
+        struck = self.ball(play) if self.game.rally else None
         play.round, outcome = apply(play.round, int(play.entry))
         play.entry = ""
         play.flash = outcome
         play.flash_left = FLASH_TIME
+        # Rocket art, and only rocket art: a mode without parts to shed simply
+        # does not take this branch. The branch that must never fall through is
+        # the renderer dispatch in `render_play`.
         if self.mode == "rocket" and outcome is Outcome.WRONG and before > 0:
             play.falling.append(draw.knock_off(self.parts[before - 1], self.rng))
+        if outcome is Outcome.SECURED:
+            play.throw_left = THROW_HOLD
         if outcome is Outcome.WON:
             play.since_launch = 0.0
             self.record()
         elif outcome is Outcome.CORRECT and struck is not None:
             self.hit(play, "return", struck)
+        self.sounds.play(self.game.clips[outcome])
+
+    def verdict(self, play: Play):
+        """The last play's ending, while it is still being shown."""
+        return VERDICTS.get(play.flash) if play.throw_left > 0 else None
+
+    def throw(self, position: tuple[int, int]) -> None:
+        """A click on the field, resolved as the pending placement."""
+        play = self.play
+        if self.verdict(play) is not None:
+            return  # the last play is still on screen; this click is not aimed yet
+        called = play.round.placing
+        aimed = draw.field_yards(position, PLACE_MAX)
+        if aimed is None:
+            return
+        play.round, outcome = place(play.round, aimed)
+        play.throw = (aimed, called)
+        play.throw_left = THROW_HOLD
+        play.flash = outcome
+        play.flash_left = FLASH_TIME
+        if outcome is Outcome.LOST:
+            # The third incompletion: `lose` owns the failure screen and its clip.
+            self.lose()
+            return
         self.sounds.play(self.game.clips[outcome])
 
     def ball(self, play: Play) -> tuple[float, float]:
@@ -428,6 +526,11 @@ class App:
             draw.court_ready(lane, travel),
             RETURN_FLIGHT if flight == "return" else PAST_FLIGHT,
         )
+
+    def flash(self, play: Play, outcome: Outcome) -> None:
+        play.flash = outcome
+        play.flash_left = FLASH_TIME
+        self.sounds.play(self.game.clips[outcome])
 
     def record(self) -> None:
         self.progress = merge(self.progress, self.play.round)
@@ -460,6 +563,13 @@ class App:
             part.step(dt)
         play.falling = [part for part in play.falling if not part.gone]
         play.flash_left = max(0.0, play.flash_left - dt)
+        if play.round.pending is None:
+            # The two pennants stay up for as long as the placement is live, so
+            # he can see what he called and what he actually threw while he
+            # answers for it — and for a moment after it resolves.
+            play.throw_left = max(0.0, play.throw_left - dt)
+            if play.throw_left == 0.0:
+                play.throw = None
 
         if play.volley is not None:
             # The clock waits out the flight, the same way it waits out a lost
@@ -468,16 +578,24 @@ class App:
             if play.volley.done:
                 play.volley = None
         elif play.since_launch is None and play.since_failure is None and self.focused:
-            struck = self.ball(play) if self.mode == "tennis" else None
+            struck = self.ball(play) if self.game.rally else None
             play.round, outcome = tick(play.round, dt)
             if outcome is Outcome.LOST:
                 self.lose()
             elif outcome is Outcome.POINT:
                 self.concede(struck)
-            elif self.mode == "rocket" and play.round.hint is None:
+            elif outcome is Outcome.LAPSED:
+                # The domain has already moved on to the next fact; a half-typed
+                # answer to the one that got away would be sitting in the box
+                # ready to be submitted against it.
+                play.entry = ""
+                play.throw_left = THROW_HOLD
+                self.flash(play, outcome)
+            elif self.game.warns and play.round.hint is None and play.round.placing is None:
                 # `warn` sets its own interval from how full the bank is, so
-                # under a stopped clock it degenerates into a metronome at a
-                # fixed rate — the opposite of a pulse that quickens.
+                # under a stopped clock — a hint, or a throw being aimed — it
+                # degenerates into a metronome at a fixed rate, the opposite of
+                # a pulse that quickens.
                 self.warn(play, dt)
 
         if play.since_launch is not None:
@@ -519,17 +637,21 @@ class App:
         draw.text(self.canvas, self.fonts["huge"], "mathr", (640, 96), draw.ACCENT)
         draw.text(self.canvas, self.fonts["small"], "pick a game", (640, 156), draw.DIM)
         for mode_id, rect in CABINETS:
+            dimmed = mode_id == "soon"
             screen = draw.draw_cabinet(
                 self.canvas,
                 self.fonts["small"],
                 rect,
-                MODES[mode_id].title,
+                "Coming soon" if dimmed else MODES[mode_id].title,
                 rect.collidepoint(self.pointer),
+                dimmed=dimmed,
             )
             if mode_id == "rocket":
                 self.canvas.blit(self.thumbnail, self.thumbnail.get_rect(center=screen.center))
-            else:
+            elif mode_id == "tennis":
                 draw.draw_mini_court(self.canvas, screen, self.clock_now)
+            elif mode_id == "football":
+                draw.draw_gridiron(self.canvas, screen, self.clock_now)
         labels = {
             "sound": f"Sound: {'On' if self.progress.settings.sound else 'Off'}",
             "timer": f"Timer: {'On' if self.progress.settings.timer else 'Off'}",
@@ -552,7 +674,7 @@ class App:
         draw.draw_card(self.canvas, button.rect, button.tone, button.rect.collidepoint(self.pointer))
         lines = [(button.label, self.fonts["small"], draw.INK)] + [
             (label, self.fonts["tiny"], colour)
-            for label, colour in _badge(self.progress.level(button.value))
+            for label, colour in _badge(self.progress.level(self.mode, button.value))
         ]
         # Centred as a block, so the tall Everything card is not top-heavy and
         # a level with no record yet is not a name floating above empty space.
@@ -564,14 +686,23 @@ class App:
         play = self.play
         if play is None:
             return
-        if self.mode == "rocket":
-            self.render_rocket(play)
-        else:
-            self.render_court(play)
+        # A dict, not a two-way branch: a mode added to MODES without a
+        # renderer used to fall through to the tennis court, which compiles,
+        # draws, and plays as the wrong game. This raises instead.
+        {
+            "rocket": self.render_rocket,
+            "tennis": self.render_court,
+            "football": self.render_field,
+        }[self.mode](play)
 
         self.button(BACK)
         draw.draw_progress(
-            self.canvas, self.fonts["small"], play.round.parts, play.round.rules.target, self.game.noun
+            self.canvas,
+            self.fonts["small"],
+            play.round.parts,
+            play.round.rules.target,
+            self.game.noun,
+            self.game.per_part,
         )
 
         if play.since_failure is not None:
@@ -587,8 +718,13 @@ class App:
                 self.fonts["tiny"],
                 play.round.hint.strategy,
                 play.round.hint.prompt,
+                self.game.layout.hint,
             )
-        self.render_entry(play)
+        if play.round.placing is None:
+            self.render_entry(play)
+        # Nothing else while a throw is called: no keypad, no question. The
+        # click is the answer, and a prompt beside it is a second thing to
+        # answer. The called yard is drawn over the field, where he is aiming.
 
     def render_rocket(self, play: Play) -> None:
         if play.round.timed:
@@ -634,18 +770,64 @@ class App:
             play.volley.swing if play.volley else 0.0,
         )
 
+    def render_field(self, play: Play) -> None:
+        if play.round.timed:
+            draw.draw_time_bar(self.canvas, play.round.seconds_left / play.round.cap)
+        draw.draw_field(
+            self.canvas,
+            self.fonts["small"],
+            PLACE_MAX,
+            play.round.parts * self.game.per_part,
+            play.throw,
+            self.clock_now,
+        )
+        if play.round.rules.place_lives is not None:
+            draw.draw_attempts(
+                self.canvas, self.fonts["tiny"], play.round.adrift, play.round.rules.place_lives
+            )
+        verdict = self.verdict(play)
+        if verdict is not None:
+            word, colour, aside = verdict
+            draw.draw_verdict(
+                self.canvas,
+                self.fonts["big"],
+                self.fonts["small"],
+                word,
+                colour,
+                aside.format(units=play.round.parts * self.game.per_part),
+            )
+        elif play.round.placing is not None:
+            draw.draw_call(
+                self.canvas, self.fonts["huge"], self.fonts["small"], play.round.placing
+            )
+        elif play.round.pending is not None:
+            # An untimed drive has no deadline to draw, so the ball hangs where
+            # it was thrown rather than dropping in on a clock that is not there.
+            draw.draw_incoming(
+                self.canvas,
+                draw.closing(play.round.pending_left, play.round.confirm_seconds)
+                if play.round.pending_left is not None
+                else 0.5,
+                self.clock_now,
+            )
+
     def render_entry(self, play: Play) -> None:
+        layout = self.game.layout
         if play.round.hint is None:
             # The hint carries its own prompt: in the rocket the queue has
             # already moved on, so drawing both would put two questions on
             # screen at once.
             draw.text(
-                self.canvas, self.fonts["big"], play.round.current.prompt, (940, 210), draw.INK
+                self.canvas, self.fonts["big"], play.round.current.prompt, layout.prompt, draw.INK
             )
-        box = pygame.Rect(840, 280, 200, 96)
+        box = layout.entry
         colour = draw.INK
         if play.flash_left > 0 and play.flash is not None:
-            colour = draw.GOOD if play.flash is Outcome.CORRECT else draw.BAD
+            colour = (
+                draw.GOOD
+                if play.flash in (Outcome.CORRECT, Outcome.PLACED, Outcome.SECURED)
+                else draw.BAD
+            )
         pygame.draw.rect(self.canvas, draw.PANEL, box, border_radius=14)
         pygame.draw.rect(self.canvas, colour, box, width=4, border_radius=14)
         draw.text(self.canvas, self.fonts["big"], play.entry or "_", box.center, colour)
@@ -653,11 +835,12 @@ class App:
             self.button(button)
 
     def render_win(self, play: Play) -> None:
+        banner = self.game.layout.banner
         if self.mode == "rocket" and play.since_launch < COUNTDOWN:
             count = int(COUNTDOWN - play.since_launch) + 1
-            draw.text(self.canvas, self.fonts["huge"], str(min(3, count)), (940, 340), draw.ACCENT)
+            draw.text(self.canvas, self.fonts["huge"], str(min(3, count)), banner, draw.ACCENT)
             return
-        draw.text(self.canvas, self.fonts["huge"], self.game.won, (940, 340), draw.ACCENT)
+        draw.text(self.canvas, self.fonts["huge"], self.game.won, banner, draw.ACCENT)
 
     def render_failure(self, play: Play) -> None:
         mode = self.game
@@ -665,14 +848,13 @@ class App:
             if self.mode == "rocket":
                 draw.draw_beam(self.canvas, ROCKET_HEART, play.since_failure / mode.lose_hold)
             return
-        draw.text(self.canvas, self.fonts["huge"], mode.lost, (900, 300), draw.BAD)
+        banner = mode.layout.banner
+        draw.text(self.canvas, self.fonts["huge"], mode.lost, banner, draw.BAD)
         draw.text(
             self.canvas,
             self.fonts["mid"],
-            f"you got {play.round.parts} {mode.noun} on"
-            if self.mode == "rocket"
-            else f"you returned {play.round.parts}",
-            (900, 390),
+            mode.lost_line.format(units=play.round.parts * mode.per_part),
+            (banner[0], banner[1] + 90),
             draw.DIM,
         )
         for button in FAIL_BUTTONS:

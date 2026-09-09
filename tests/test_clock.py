@@ -8,6 +8,7 @@ from mathr.domain.facts import LEVELS, LEVELS_BY_ID
 from mathr.domain.round import (
     BALL_FLIGHT,
     BANK_PARTS,
+    FOOTBALL,
     GRACE_PARTS,
     PARTS_TO_LAUNCH,
     RETRY_GAP,
@@ -41,7 +42,7 @@ def test_the_round_opens_with_grace_above_the_cap():
 
 def test_start_and_cap_derive_from_the_level_under_either_rule_set():
     """The derivation, never the literals: retuning a level must not break this."""
-    for rules in (ROCKET, TENNIS):
+    for rules in (ROCKET, TENNIS, FOOTBALL):
         for level in LEVELS:
             round_ = new_round(level, random.Random(0), rules=rules)
             assert round_.seconds_left == rules.opening_parts * level.seconds_per_part

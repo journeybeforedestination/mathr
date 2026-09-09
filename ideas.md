@@ -91,13 +91,30 @@ between sessions — that is the signal that the setting belongs to the level an
 not to the session.
 
 ## A number-line placement mode
-The hint widget draws a line, its dots and their labels already — most of a mode
-where the question is "put 7 where it goes" and the answer is a position rather
-than a number. Number-line estimation is the strongest longitudinal predictor in
-the research, so the case for it is good. Left out because it is a third mode
-with a non-boolean outcome: `Round` counts right and wrong, and "within two" is
-neither. That is a `Rules` dial at best and a second reducer at worst, and it
-should be decided when the mode is built, not now.
+**Built** — Touchdown Drive, as a deep pass rather than a mode of its own. The
+original entry's guess is worth keeping beside what it cost: it said the
+non-boolean outcome was "a `Rules` dial at best and a second reducer at worst".
+It landed between the two — three `Rules` dials (`places`,
+`confirm_parts`, `place_lives`), a second *reducer function* beside `apply`, a
+branch inside `apply` for the answer that confirms a placement, and no second
+`Round`. What it did not
+predict is where the cost actually fell: the outcome is thresholded into
+`PLACED` / `ADRIFT` at the boundary, so `Outcome` stayed a flat enum, and the
+raw distance survives in `placements` — but splitting `LevelRecord` by mode and
+making `draw_cabinet` work at half its height were both larger jobs than the
+placement itself.
+
+The unbuilt half is the scaffolding. The field has fixed marks now — yard
+stripes every five, added after watching it played, against this plan's own
+advice that a mark is something to count to. What is still missing is the part
+that made marks defensible in the research: *thinning them out as he improves*.
+That needs a progression rule and a stored level — a second mastery model beside
+the deck weighting, which is one model too many for now. Until then
+`STRIPE_EVERY` is a constant and the honest position is that the stripes are a
+readability trade, not a teaching one. `placements` is the data that would tell you whether it
+is needed: mean error per decade bucket, once there are enough attempts in each
+to plot. A parent-facing view of it is the same deferral, and belongs with the
+parent view of weak facts above.
 
 ## Packaging
 Currently `uv run mathr` from the source directory. A desktop entry, or a

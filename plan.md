@@ -1171,6 +1171,644 @@ here.
 
 ---
 
+## Football: a drive, and a pass placed on the field
+
+A third cabinet, **Touchdown Drive** (working title — the mode id is
+`football`; do not call it anything with *field goal* in it, for the reason
+below). Most downs are ordinary keypad facts from the same level pools,
+scored exactly as the rocket scores them: correct advances the ball ten yards,
+wrong loses ten. Every fourth down is different — no keypad. A number appears
+("throw to the 37"), the field is drawn as a bare 0–100 line with the goal lines
+and the 50 marked and nothing else, and he **clicks where that number goes**. A
+throw within tolerance completes for a thirty-yard gain; a wide one falls
+incomplete and costs nothing. A hundred yards is a touchdown and wins the round.
+The clock is the rocket's draining bank, and it stops dead while a throw is
+pending.
+
+The mode exists for the throw. Number-line estimation is the strongest
+longitudinal predictor in `research/math-education.md` §3.2 — first-grade
+whole-number line estimation predicting seventh-grade fraction arithmetic — and
+it is the only thing in this game that cannot be gamed by memorising a table.
+The drive is the wrapper that gets him to take twenty of them a week.
+
+### The load-bearing decision: the placement is a pass, not a field goal
+
+The obvious framing is a field goal. It is wrong, and the failure is not a
+matter of taste.
+
+Walk it with real numbers. `Rules.target` counts `parts`, and `parts` is the
+ball's position: 0 at his own goal line, 10 at the opponent's. A field goal
+worth three parts, attempted every fourth down, plays out as:
+
+1. Downs 1–3: three correct answers, `parts` 0 → 3. Ball on the 30.
+2. Down 4: a good kick. `parts` 3 → 6. **Ball on the 60.**
+3. Downs 5–7: three more correct. `parts` 9. Ball on the 90.
+4. Down 8: a good kick. `parts` 10 → touchdown.
+
+Step 2 is the problem. A field goal in football *ends the possession* — the ball
+goes back to the other team on a kickoff. A kick that moves your own offence
+thirty yards downfield and lets you keep playing is not a rule of any football
+code. The mode would compile, draw, and play correctly while teaching him
+something false about the sport it is named after; the symptom is a seven-year-old
+who is confused the first time he watches a real game, which never gets reported
+as a bug.
+
+The alternative that keeps the kick is to make `parts` *points on a scoreboard*
+and add a separate yards counter to `Round` so the domain knows when he is in
+range. That is two counters and at least three new `Rules` dials, for a mode
+whose whole reason to exist is the number line.
+
+A deep pass has none of this. A completed pass advances the drive — that is
+exactly what a completed pass does — so mechanic and metaphor agree, `parts`
+stays yards-in-tens, `Rules.target` stays 10, and the whole rule set is
+`ROCKET` plus two dials.
+
+Everything below is downstream of that. The domain names it a *placement*, never
+a pass: `domain/round.py` is not allowed to know about footballs any more than it
+knows about rockets or tennis balls, and the next placement mode should not have
+to fake a receiver.
+
+### What changes, file by file
+
+| File | Change |
+|---|---|
+| `src/mathr/storage.py` | `VERSION` 1 → 2; `LevelRecord` keyed by `"<mode>/<level>"`; migration; new `placements` section |
+| `src/mathr/domain/round.py` | two `Rules` dials, `PLACE_MAX`, `PLACE_TOLERANCE`, `Aim`, `Round.targets`/`placed`/`placing`, `place()`, two `Outcome` members, `tick` early return |
+| `src/mathr/shell/audio.py` | two clips: `catch`, `incomplete` |
+| `src/mathr/shell/draw.py` | `draw_cabinet` scaled to `rect.height`; `draw_field`; `draw_gridiron` (cabinet art) |
+| `src/mathr/shell/app.py` | `FOOTBALL` mode, 2×2 `CABINETS`, `render_field`, click-to-place, `render_play` dispatch, `press`/`warn` gating |
+| `tests/` | new `test_place.py`; additions to `test_clock.py`, `test_storage.py` |
+| `README.md`, `CLAUDE.md`, `ideas.md` | see each step |
+
+### The steps
+
+Ordered by what has to exist before what. Storage leads because the migration is
+cheaper with two modes in the file than with three, and because a football round
+that lands first writes into the shared bucket and then has to be untangled.
+Audio precedes the shell so the mode is never silently mute. The cabinet layout
+precedes the shell because the mode is unreachable without a cabinet.
+
+---
+
+#### Step 1 — Split `LevelRecord` by mode, and add `placements`
+
+`storage.py:124` `_fold` keys the record by `round.level_id` alone and `Round`
+carries no mode, so **a tennis win already increments the same `launches` as a
+rocket win on the same level**, and `best_seconds` is already a minimum across
+two clocks that are not comparable. `README.md:192–195` records this as a
+deliberate choice. It is being overturned: a third mode makes the badge on a
+level card the mixture of three different games, and `_badge`
+(`shell/app.py:682`) has no way to say so.
+
+- `VERSION = 1` → `2` (`storage.py:18`).
+- `Round` gains `mode_id: str`, set by `new_round` from a new argument. The
+  alternative — `merge(progress, round, mode_id)` — leaves `Round` unable to
+  answer "which game was this", which the placement tallies also need.
+- `_fold`/`merge` key `progress.levels` as `f"{round.mode_id}/{round.level_id}"`.
+- `load` migrates: when the file's `version` is 1, every `levels` key `k`
+  becomes `f"rocket/{k}"`. Rocket is the right guess — it is the default mode
+  (`shell/app.py:201`) and, per the dig, `everything`, `fives_times` and
+  `tens_times` had never been played at all.
+- `Progress.level(level_id)` (`storage.py:41`) takes a mode too. All call sites
+  are in `render_levels` (`shell/app.py:540`).
+- New top-level `placements` section, read through `.get` like every field added
+  since v1: `{"30": {"attempts": 4, "error": 21.5}}` — key is the target's
+  decade bucket as a string, `error` is summed absolute yards. Bucketed, not
+  keyed by exact yard, because 11 keys fill with usable data in a week and 101
+  keys never do.
+
+**Gate:** `uv run pytest`. New tests in `test_storage.py`: a v1 file's `fives`
+record loads as `rocket/fives`; a rocket win and a tennis win on the same level
+land in separate records; `placements` round-trips; a v2 file missing
+`placements` loads as empty.
+
+**Falsifies:** `README.md:192–195` ("One record per level, shared by both
+modes…") — rewrite in this step. `plan.md:530–532` ("it keys `LevelRecord` in
+`progress.json`") is still true but now under-specified; add the mode prefix.
+`CLAUDE.md`'s `Fact.key` invariant explicitly permits *adding fields beside*
+`right`/`wrong` without a bump — that is unchanged and unaffected; this bump is
+for the `levels` key shape, which is a different format.
+
+---
+
+#### Step 2 — The placement in the domain
+
+No shell in this step. Everything here is testable without opening a window.
+
+New in `domain/round.py`, beside the existing dials at lines 16–28:
+
+```python
+PLACE_MAX = 100          # the span of the line, in whatever the mode calls units
+PLACE_TOLERANCE = 6      # how far off still counts
+PLACE_EVERY = 4          # downs between placements
+PLACE_PARTS = 3          # what a good one is worth
+```
+
+`Rules` (`round.py:40`) gains two fields, both defaulted so `ROCKET` and
+`TENNIS` at lines 59 and 63 need no edit:
+
+```python
+place_every: int | None = None   # None: this mode has no placements
+place_parts: float = 0.0
+```
+
+`Outcome` (`round.py:31`) gains `PLACED = "placed"` and `ADRIFT = "adrift"`.
+Domain-neutral names on purpose — `CAUGHT`/`INCOMPLETE` would put a football in
+the reducer, which is the seam `CLAUDE.md` says not to cross.
+
+`Round` gains:
+
+```python
+targets: tuple[int, ...]   # drawn once, in new_round, from the rng
+placed: int                # how many have been resolved
+```
+
+and `placing` as a **derived property**, not a stored field:
+
+```python
+@property
+def placing(self) -> int | None:
+    every = self.rules.place_every
+    if every is None or self.over or self.hint is not None:
+        return None
+    if self.asked // every <= self.placed:
+        return None
+    return self.targets[self.placed]
+```
+
+Derived rather than stored because a stored `placing` would have to be written
+on every path through `apply` the way `hint` is (`round.py:274` writes `hint` on
+both the right and the wrong path precisely so a stale one cannot survive an
+answer), and a single missed path is a placement that never appears or one that
+appears twice. Derived, only `place()` writes anything, and `placing` cannot
+disagree with `asked`.
+
+Note the `hint is not None` clause: **the hint wins.** A wrong answer on the
+fourth down sets `hint` and makes a placement due on the same frame; he sees the
+number line for the fact he just missed, and the throw appears when he dismisses
+it. Without the clause both are live at once and the shell has to arbitrate,
+which is a rule in the shell.
+
+`targets` are drawn in `new_round` — `rng.choices(range(PLACE_MAX + 1), k=n)` —
+and never during a reduction, because `tick` and `apply` take no rng and the
+suite pins shuffle determinism per seed. Draw enough for the longest possible
+round; the queue replay in `_advance` (`round.py:185`) means `asked` has no upper
+bound, so index with `self.placed % len(self.targets)` or draw generously and
+document the cap.
+
+`tick` (`round.py:206`) currently reads:
+
+```python
+if round.over or round.hint is not None:
+    return round, None
+```
+
+It becomes `or round.placing is not None`. This is the whole reason the
+placement is in the domain: `seconds_left`, `on_current` and `elapsed` stop
+*together*, by construction. It also buys a property for free — the seconds he
+spends aiming never reach the next fact's `Tally.seconds`, so aiming time cannot
+push a fact up the deck weighting.
+
+New reducer, beside `dismiss` at `round.py:254`:
+
+```python
+def place(round: Round, value: int) -> tuple[Round, Outcome]:
+```
+
+Thresholds `abs(value - round.placing) <= PLACE_TOLERANCE` into a boolean at
+this boundary — research §6 calls this "cheapest, probably right" — records an
+`Aim(attempts, error)` under the target's decade bucket in a new
+`Round.aims: Mapping[str, Aim]`, increments `placed`, adds `place_parts` on a
+good throw and nothing on a wide one, and returns `PLACED` or `ADRIFT`. It must
+also set `launched` when `parts >= rules.target`, exactly as `apply` does at
+`round.py:280` — a touchdown can be scored by a throw.
+
+A wide throw is **not** re-queued. There is no fact to re-ask; the next target
+is drawn fresh. `RETRY_GAP` has nothing to do with this path.
+
+New rules bundle:
+
+```python
+FOOTBALL = Rules(GRACE_PARTS, BANK_PARTS, 1.0, True, True, None,
+                 PARTS_TO_LAUNCH, PLACE_EVERY, PLACE_PARTS)
+```
+
+**Gate:** `uv run pytest`. New `tests/test_place.py`: a placement is due after
+`PLACE_EVERY` answers and not before; every clock stops while one is pending
+(mirror `test_no_clock_runs_while_a_hint_shows`, `test_clock.py:230`); a hint
+suppresses a due placement until dismissed; exactly on tolerance is good and one
+past it is not; a wide throw costs no parts and no time; a good throw can win
+the round; `place` on a round with `place_every is None` raises; aiming time
+never reaches `Tally.seconds` (mirror `test_hint_reading_time_never_reaches_the_record`,
+`test_clock.py:250`). Add to `test_clock.py`: the derivation tests at lines 42
+and 51 should pass under `FOOTBALL` as they do under both existing rule sets.
+
+**Falsifies:** `CLAUDE.md`'s statement that `domain/round.py` "knows `parts: int`,
+a bank of seconds and a `Rules` bundle" — it now also knows a span and a
+tolerance. Update in the docs step, and keep the sentence's point: it still
+knows no part names.
+
+---
+
+#### Step 3 — Two clips
+
+`audio.py:150` builds eight clips. Add `catch` (a soft thump plus a rising
+third — it should feel like a reward, not like `correct`) and `incomplete` (a
+short dry hiss, clearly not `wrong`, because a wide throw costs nothing).
+
+Follow `_pock` (`audio.py:110`) for shape: a `wave(t)` closure and `_envelope`,
+built through `_tone`, which reads the rate back from `mixer.get_init()` rather
+than hardcoding it.
+
+**Gate:** `uv run pytest` — clip *construction* is covered by the suite. Audible
+output is not; that is item 2 of the human checklist in `CLAUDE.md`.
+
+---
+
+#### Step 4 — Four cabinets, and `draw_cabinet` at any height
+
+**The 2×2 grid does not fit as `draw_cabinet` is written.** The arithmetic:
+
+`draw_cabinet` (`draw.py:488`) uses fixed offsets — marquee 62 tall at `y+20`,
+screen 236 tall below it, and a panel whose height is
+`rect.bottom - screen.bottom - 44`. That requires `rect.height > 380` for the
+panel to have any height at all; the current cabinets are 440.
+
+The vertical budget on the 800-tall surface: "mathr" at y=96 and "pick a game"
+at y=156 (`app.py:518–519`), and `MENU_BUTTONS` at y=666 with height 76
+(`app.py:100–104`), so the cabinets get roughly y=186 to y=650 — **464px for two
+rows**, or about 220px each. Two rows of 400+ is 800px and does not fit.
+
+So `draw_cabinet` must derive its marquee, screen and panel from `rect.height`.
+Scale the existing offsets by `rect.height / 440` rather than inventing new
+ratios: that reproduces today's cabinet exactly at h=440, which is a property a
+test can assert.
+
+- `CABINETS` (`app.py:95`) becomes four entries at x=160 and x=720, w=400,
+  y=186 and y=420, h=220.
+- The fourth is **dimmed and not clickable**. `draw_card` (`draw.py:202`)
+  already ignores `hovered` when `dimmed`; the click loop at `app.py:283–286`
+  must skip it, the same way the handlers never see `SOON_BUTTONS`
+  (`app.py:127`). A cabinet that lights up and does nothing reads as broken.
+  Give it a marquee reading "Coming soon" and an empty screen.
+- `self.thumbnail = draw.rocket_thumbnail(self.parts, 200)` (`app.py:218`) is
+  sized for a 236-tall screen. At h=220 the screen is ~118, so the thumbnail
+  wants ~100. Derive it from the cabinet height rather than swapping one
+  magic number for another.
+- `draw_mini_court` (`draw.py:517`) insets by fixed `(-36, -30)`; at half the
+  height that is most of the screen. Make the inset proportional.
+- New `draw_gridiron(surface, rect, now)` for the football cabinet's screen: the
+  field with the 50 marked and a ball arcing across it.
+
+**Gate:** the human checklist. `uv run mathr`, look at the arcade — four
+cabinets, three live and one dimmed, nothing clipped, the dimmed one does not
+light up under the cursor and does nothing when clicked. Resize to a tall narrow
+tile and check the same.
+
+**Falsifies:** `plan.md:534–535` ("two drawn cabinets with marquees and small
+live screens").
+
+---
+
+#### Step 5 — The mode, the field, and the click
+
+- `MODES` (`app.py:57`) gains `"football"`: title, `FOOTBALL` rules, a clip map
+  covering `CORRECT`/`WRONG`/`WON`/`LOST`/`PLACED`/`ADRIFT`, noun `"yards"`,
+  win/lose strings, hold times. `clips[outcome]` indexes directly
+  (`app.py:409`), so a missing key raises loudly — unlike `Sounds.play`, which
+  goes silent. Rocket and tennis need no new entries: they never produce the new
+  outcomes.
+- **`render_play` (`app.py:563`) is a two-way branch** — `if self.mode ==
+  "rocket": render_rocket() else: render_court()`. A third mode falls into the
+  tennis court silently. Replace with a dispatch off `Mode`. There are twelve
+  `self.mode ==` sites (`app.py:397, 402, 440, 471, 477, 567, 656, 665, 673`);
+  the ones that ask "is this mode's art a rocket" belong on `Mode` as fields or
+  hooks. **Make the case in the commit message before doing it** — this is the
+  new abstraction the third mode argues for, and `CLAUDE.md` asks for the case,
+  not a speculative framework.
+- `draw_field(surface, ...)` in `draw.py`: a 0–100 line across the play area,
+  goal lines at each end and one mark at the 50, nothing else. Anchoring at the
+  midpoint is the estimation strategy the research watches children develop;
+  ticks every ten would turn the task into counting to the nearest tick and the
+  mode would train nothing. It shares the left half with `HINT_BOX`
+  (`draw.py:540`, x 60–660) — the keypad at x ≥ 700 must stay clear, and the
+  field must not collide with the hint when both are on screen in sequence.
+- Input: while `play.round.placing is not None`, a click inside the field
+  converts x → yards and calls `place`. It arrives already in design space —
+  `click` is fed `self.to_design(event.pos)` at `app.py:264` — and nothing
+  downstream may see window coordinates.
+- `press` (`app.py:377`) must **return early while `placing is not None`**. It
+  currently calls `dismiss` on any keystroke and then appends digits; left alone,
+  he types an answer that is queued against a question hidden behind a pending
+  throw. A keystroke must not resolve a placement either — only a click on the
+  field can, because the click *is* the estimate.
+- `warn` (`app.py:491`) is already gated on `play.round.hint is None` at
+  `app.py:477`; it needs the same gate on `placing`, for the identical reason —
+  `warn` sets its interval from `seconds_left / threshold`, and under a stopped
+  clock that ratio is constant, so the pulse that exists to quicken becomes a
+  metronome while he aims.
+- `start` (`app.py:354`): football has no `lives`, so the Timer toggle applies
+  to it as it does to the rocket. An untimed football round still throws.
+
+**Gate:** the human checklist — `uv run mathr`, play a football round at two
+window sizes. Specifically: the clock visibly stops when a throw appears; a
+keystroke does nothing while it is up; a click near a goal line and one near the
+50 both land where they look like they land in a tall narrow tile.
+
+---
+
+#### Step 6 — Documentation
+
+- `README.md`: the opening paragraph says "Two games, one question pool"
+  (line 5) and "Both cabinets" (line 22) — three now. Add a Touchdown Drive
+  paragraph beside Rocket Builder (line 36) and Tennis Match (line 46). Rewrite
+  the shared-record paragraph (lines 192–195). Note in Controls (line 146) that
+  one screen is clicked rather than typed.
+- `CLAUDE.md`: add `football` to the map; add `PLACE_MAX`, `PLACE_TOLERANCE`,
+  `PLACE_EVERY`, `PLACE_PARTS` to the tuning table; add the traps below to
+  *Invariants that break silently*; update *A third game mode* under *Making the
+  two likely changes* to describe what a fourth would now cost; correct the
+  `domain/round.py` sentence per step 2.
+- `ideas.md`: strike *A number-line placement mode* and record what was actually
+  built against what it claimed, in the style of the *A second game mode* entry.
+  Its claim — "it is a third mode with a non-boolean outcome … a `Rules` dial at
+  best and a second reducer at worst" — landed between the two: one dial pair, a
+  second *reducer function* beside `apply`, and no second `Round`.
+
+---
+
+### Overturned by the first play-through
+
+Two things were wrong the moment it was played, and both were wrong in the
+plan rather than in the code.
+
+**The target was drawn across the whole line, independent of the ball.** From
+the 70 it called *throw to the 20*, and sometimes it called the yard the ball
+was already on. Every walk-through above checks that the *drive* makes football
+sense; none of them checks that the *throw* does. The fix is the same shape as
+the field-goal decision: the target is drawn as an offset ahead of the marker
+(`PLACE_GAIN_MIN`..`PLACE_GAIN_MAX`), never as an absolute yard, and a
+completion **spots the ball where the pass was caught** rather than paying a
+flat `PLACE_PARTS`. That deletes a dial: the number he estimates *is* the number
+he gets, a short pass is worth a little and a deep one a lot, and the line and
+the parts bar become one axis — one part covers `PLACE_MAX // rules.target`.
+The cost is that a pass can no longer score: the goal line is a labelled end of
+the line, so a target that could reach it would be a free touchdown. Inside the
+last part `placing` is None and the ball has to be run in.
+
+**`PLACE_EVERY = 4` bought too few placements.** Three keypad questions per
+throw made it a rocket round with an occasional line. It is 1 — a throw after
+every answer — because the placement is the thing the mode exists for and the
+arithmetic is the thing there is already a mode for. A round is now about five
+answers and five throws.
+
+**And the placement became a claim rather than a gain.** The mode as planned
+asked one thing per play; it now asks two, and the play is a *throw and a
+catch*: a good placement goes to `Round.pending` and moves nothing until an
+answer confirms it before `pending_left` runs out. The reason is the one this
+plan states for the mode existing at all — the placement is the thing that
+cannot be gamed by a memorised table — and a placement that pays out on its own
+can be gamed the other way, by clicking near the middle and taking whatever it
+gives. Two skills per play, neither tradeable for the other. It cost two `Round`
+fields, one `Rules` dial, two `Outcome` members, a branch in `apply` that plays
+by the rally's rules rather than football's, and a lapse path in `tick`.
+
+**A miss had no cost, so it became three strikes.** A wide placement used to
+leave an ordinary running down behind it, worth ten yards for a right answer —
+which made the cheapest way to play the mode "click anywhere, then answer the
+question you were going to be asked anyway". It now says INCOMPLETE, moves
+nothing, calls a fresh yard from the same spot, and spends one of three
+attempts; the third is a turnover, through `Rules.place_lives` and
+`Round.adrift`. That also deleted the last of the `asked`-versus-`placed`
+bookkeeping: a placement is due whenever none is in the air, which is one
+sentence instead of an operator nobody could check by reading it.
+
+**A dropped ball kept its question, and the box kept its digits.** Both were
+the same missing step: `tick` cleared `pending` on a lapse and nothing else, so
+the fact he had run out of time on was still `queue[0]` for the next catch, with
+whatever he had typed against it still in the entry box ready to be submitted.
+It now advances the queue and re-queues the fact at `RETRY_GAP` the way a ball
+past him does in tennis, and the shell empties `play.entry` on the same frame.
+The lapse deliberately raises no hint, which every other timeout here does: the
+next thing it asks for is a click on the field, and a hint can only be put away
+by typing — a click that dismissed one would also be a throw, aimed wherever he
+happened to be reading.
+
+**The screen was re-laid-out around the line.** The field runs the full width of
+the top and everything he types sits below it, which takes the line from five
+pixels a yard to ten. That needed `Mode` to carry a `draw.Layout` — where the
+prompt, the entry box and a hint go — because football's hint lands over the
+field's left half while the other two modes keep the original arrangement. The
+number line has been rect-relative since it was built, which is the only reason
+this was a constant and not a rewrite.
+
+**And the field got its stripes back**, which this plan rejected twice. Every
+five yards, unnumbered, in green rather than white. The rejection reasoning
+stands and is unchanged — a stripe is something to count to rather than a
+distance to judge — but it is a picture of a field to a seven-year-old, and the
+trade is his to make from watching him play. `STRIPE_EVERY = None` restores the
+bare line, which is why it is a constant and not a literal — and after seeing
+them on the field he took them straight back off again, which is the constant
+earning itself.
+
+### Traps
+
+**A stored `placing` will drift from `asked`.** Derived from `asked`, `placed`
+and `rules.place_every`, it cannot. If a later change makes it a field for
+convenience, it must then be written on *every* path through `apply` — both the
+correct and the wrong branch, and the early return at `round.py:270` where a
+wrong answer in tennis leaves the queue alone — the way `hint` is at
+`round.py:274`. A single missed path is a throw that never appears, or one that
+appears twice on consecutive downs. Nothing raises.
+
+**`tick` must return early on `placing`, and `warn` must be gated on it.** Both
+for the reasons already recorded for `hint`: without the `tick` return,
+`seconds_left` stops (or does not) independently of `on_current`, and aiming
+time lands in `Tally.seconds`, which feeds the deck weighting, which pushes the
+facts around the throw to the front of the next deck. The symptom is "he keeps
+getting the same questions", which names nothing. Without the `warn` gate the
+alarm pulse becomes a fixed metronome while he aims.
+
+**A keystroke must not resolve or dismiss a placement.** `press`
+(`app.py:377`) calls `dismiss` on every keystroke by design — losing the first
+digit of an answer reads as a dropped key. That reasoning does not extend here:
+the click *is* the estimate, and a placement resolved by the keyboard records an
+aim he never made. `press` returns early while `placing is not None`.
+
+**The hint must win over a due placement.** A wrong answer on the fourth down
+raises both. If both are live the shell arbitrates, which puts a rule in the
+shell; if the placement wins, he never sees the number line for the fact he
+missed. The `hint is not None` clause in the `placing` property settles it in the
+domain, and `dismiss` (`round.py:254`) then makes the throw live with no extra
+code.
+
+**`render_play` is a two-way branch, not a dispatch.** `app.py:567` is
+`if self.mode == "rocket": … else: render_court(…)`. A third mode added to
+`MODES` without touching this renders as tennis — it compiles, it draws, and
+nothing raises. Fix the dispatch in the same step that adds the mode.
+
+**A dimmed cabinet must not be clickable.** `draw_card` (`draw.py:202`) already
+refuses to hover a dimmed card; the click loop at `app.py:283–286` iterates
+`CABINETS` and would happily set `self.mode` to a mode that does not exist,
+raising a `KeyError` from `App.game` (`app.py:342`) on the next frame. Skip it
+there, the way the handlers never see `SOON_BUTTONS`.
+
+**`draw_cabinet`'s offsets are absolute.** `rect.height` below about 380 gives
+the panel a negative height and pygame draws it inverted or not at all. Scaling
+by `rect.height / 440` both fixes it and keeps the current look provably
+identical at the current size.
+
+**The `version` bump is for the `levels` key shape, not for `Fact.key`.**
+`CLAUDE.md` warns that changing `Fact.key` orphans every recorded count. This
+change does not touch it — `facts` keys and their contents are untouched, and
+`test_a_file_from_before_the_clock_still_loads` (`test_storage.py:47`) must keep
+passing unchanged except for the level key it asserts.
+
+**Placement targets come from `new_round`, never from a reducer.** `tick`,
+`apply` and `place` take no rng, and two tests pin shuffle determinism per seed
+(`test_round.py:93`, `test_select.py:47`). Drawing a target inside a reduction
+would make the round unreproducible from its seed and would break those tests in
+a way that reads as a shuffle bug.
+
+**Every fourth *answer*, not every fourth *question*.** `asked` increments on
+both the right and the wrong path (`round.py:271`). A wrong answer therefore
+advances toward the next throw even though it cost him ten yards. That is
+deliberate — the throw is a change of pace, not a reward — but it means the
+count is of attempts, and a test should say so.
+
+---
+
+### Considered and rejected
+
+- **A field goal.** Rejected on the walk-through above: it advances a drive it
+  should end.
+- **`parts` as points, with a separate yards counter.** The honest football
+  model. Two counters in `Round` and three or more `Rules` dials, for a mode
+  whose reason to exist is the line.
+- **A heterogeneous queue, `Question | Placement`.** The research document's own
+  read ("the question-generation seam, not `Round`, is what needs to
+  generalize"). Rejected as future-proofing: it touches `_advance`, `shuffled`,
+  `_weights` and storage, and one mode wants it. Revisit when a second placement
+  mode exists.
+- **A second reducer, sequenced by the shell.** Cleanest separation, but "when
+  does a throw happen" is a rule, and the shell holds no rules.
+- **The throw's target as the answer to a fact** ("8 + 5 = ?", place the
+  answer). Reuses `Fact.key`, so throws would feed `Tally` and the deck
+  weighting for free. Rejected because the span then varies by level — `fives`
+  places on 0–10 and `tens_times` on 0–100 — and a line that rescales between
+  rounds is exactly what makes the estimate un-learnable.
+- **Ticks every ten yards, like a real field.** Faithful and much easier;
+  it converts estimating into counting to the nearest tick.
+- **Marks that thin out as he improves.** The honest teaching answer, and it
+  needs a progression rule and a stored level — a second mastery model beside
+  the deck weighting. In `ideas.md`.
+- **A graded outcome, distance as the score.** How estimation is actually
+  measured, and the richer signal is the one worth having over months. Rejected
+  because `Outcome` would grow a payload every mode has to consume; the raw
+  distance is preserved in `placements` regardless, so the signal is not lost —
+  only the round's *reaction* to it is thresholded.
+- **Reusing `CORRECT`/`WRONG` for throws.** No enum change, no clip maps to
+  update — but the two events would be indistinguishable by sound, by flash, and
+  in any later recorded stream.
+- **A moving aim marker he stops with a click.** More game-like, and it measures
+  reaction as much as magnitude — it would contaminate the one signal the mode
+  exists to collect.
+- **Typing the yard number on the keypad.** Zero new input, and it collapses the
+  mode back into arithmetic.
+- **A play clock, per down.** Truer football and reuses `TENNIS`'s shape, but
+  then football and rocket differ only in art, which is the trap `The
+  load-bearing decision` of the arcade section already walked through.
+- **Four downs and no clock.** Genuinely a third reading and the most football-
+  like. `Rules` has no dial for attempts-remaining; this is the case where
+  `Rules` grows rather than the shell gaining a rule. Not now.
+- **One throw per round, at the end of the drive.** Simplest, and one estimate a
+  round is not practice.
+- **Three cabinets across, narrower.** Fits without touching `draw_cabinet`.
+  Not chosen; see below.
+- **My own wrong turn.** During the dig I said the shared `LevelRecord` was
+  undocumented and therefore a latent bug. It is documented, at
+  `README.md:192–195`, as a deliberate choice with a stated reason. Step 1
+  overturns a decision rather than fixing an oversight, and the README passage
+  has to be rewritten rather than merely extended. A fresh reader who greps
+  `plan.md` alone would make the same mistake — the reasoning was only ever in
+  the README.
+
+---
+
+### Accepted with known risk
+
+- **The 2×2 cabinet grid.** Chosen over three across. The cost is real and was
+  not visible when the choice was made: `draw_cabinet` has to become
+  height-proportional, the rocket thumbnail and `draw_mini_court` have to
+  follow, and every cabinet loses about half its height. Three across needed
+  none of that. The gain is that the fourth mode has a home and the arcade does
+  not have to be re-laid-out again. **Revisit trigger:** if the cabinets at
+  h=220 read as cramped on the real display in step 4, three across at w≈340 is
+  still available and costs nothing already built.
+- **`PLACE_TOLERANCE = 6` is a guess.** Second-graders' mean absolute error on a
+  0–100 line runs roughly 5–10% in the literature, so six yards should land near
+  a coin flip at the start. It is a dial and `CLAUDE.md` says the dials are meant
+  to be turned after watching him. **Revisit trigger:** the mean error in
+  `placements` after a week — if he is completing nearly every throw, tighten it;
+  if `failures` for football outruns `launches`, loosen it before touching
+  anything else.
+- **Nothing reads `placements`.** Same deferral as the per-fact tallies, and the
+  same justification: the data cannot be reconstructed later and costs almost
+  nothing now. **Revisit trigger:** enough attempts per bucket to plot a trend,
+  which is also when the parent view in `ideas.md` becomes worth building.
+- **A migration guess.** Every v1 level record becomes rocket's. Tennis rounds
+  played on a level will have inflated rocket's `launches` and possibly its
+  `best_seconds`. Unfixable — the mode was never recorded. The affected numbers
+  are a badge on a card.
+
+---
+
+### Environment and coverage notes
+
+- **The research document is not on `main`.** `research/math-education.md` at
+  commit `79c74c3` on `worktree/rapid-meadow-32ee`; `research/` on `main` is an
+  empty directory. Read it with
+  `git show 79c74c3:research/math-education.md`. §3.2 is the case for this mode,
+  §5 ranks it sixth, §6 names the `Outcome` problem this plan thresholds around.
+- **What was read for this plan, and what was not.** Read in full:
+  `domain/round.py`, `storage.py`, `ideas.md`, the research document. Read in
+  part: `shell/app.py` (the mode/layout constants, `handle`, `click`, `press`,
+  `submit`, `ball`, `update`, `warn`, `start`, `render_menu`, `render_play`,
+  `render_rocket`, `_badge` — **not** `render_court`, `render_entry`,
+  `render_win`, `render_failure`, or the main loop), `shell/draw.py` (the
+  cabinet, card, number-line and court-geometry sections only — **not**
+  `draw_rocket`, `draw_alien`, `draw_beam`, or the transform), `domain/facts.py`
+  (`Fact`, `Strategy`, the level tuples — **not** `_pool`, `_times` or
+  `shuffled`), `shell/audio.py` (the clip table and generator shapes only). Test
+  names were read for all six files; only `test_storage.py`'s helpers and
+  `test_clock.py`'s hint tests were read in full.
+- **To verify in step 5, not assumed here:** whether `draw_field` at
+  `HINT_BOX`'s x-range (60–660) collides with anything `render_rocket` draws —
+  the comment at `draw.py:537–539` says the rocket sits at x 110–410 and the
+  court spans 75–625, but football's own art has not been laid out.
+- **To verify in step 2, not assumed here:** how many targets `new_round` must
+  draw. `_advance` replays the deck, so `asked` is unbounded; confirm whether
+  indexing `targets` modulo its length is acceptable or whether a round can run
+  long enough for the repetition to be noticeable.
+- Three things the suite cannot reach, unchanged from `CLAUDE.md`: windowing
+  under Hyprland, audible output through PipeWire, and whether the pacing suits
+  him. `failures` per level in `progress.json` — now under `football/<level>` —
+  is what answers the third.
+
+---
+
+### Out of scope, and where it went
+
+Recorded in `ideas.md`, not built here: true/false number sentences (research
+§3.1, ranked second — the relational `=`, and the cheapest of the remaining
+ideas), guess-my-rule (§3.4), CGI-structured word problems (§3.3), and a
+scaffolded field whose marks thin out as he improves. Spacing across days,
+mastery as a probability, and retirement of mastered facts stay where the
+previous section left them. A parent-facing view of `placements` is the same
+deferral as the parent view of weak facts, and belongs in the same entry.
+
+---
+
 ## Traps
 
 **Mouse coordinates must be inverse-mapped through the design-surface scale.**
