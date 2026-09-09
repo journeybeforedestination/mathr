@@ -1,6 +1,6 @@
 import random
 
-from mathr.domain.facts import LEVELS, LEVELS_BY_ID, Question, shuffled
+from mathr.domain.facts import LEVELS, LEVELS_BY_ID, Question, Strategy, shuffled
 
 TIMES = {"+": lambda a, b: a + b, "-": lambda a, b: a - b, "×": lambda a, b: a * b}
 
@@ -92,3 +92,51 @@ def test_times_tables_run_to_ten():
         facts = LEVELS_BY_ID[level_id].facts
         assert {fact.a for fact in facts} == {n}
         assert {fact.b for fact in facts} == set(range(11))
+
+
+# --- the route drawn on a miss ----------------------------------------------
+
+EVERY_FACT = LEVELS_BY_ID["everything"].facts
+
+
+def test_every_strategy_lands_on_the_answer():
+    for fact in EVERY_FACT:
+        assert fact.strategy.end == fact.result, fact.key
+
+
+def test_a_bridging_fact_stops_at_ten():
+    for fact in LEVELS_BY_ID["bridge"].facts:
+        strategy = fact.strategy
+        assert len(strategy.jumps) == 2, fact.key
+        assert strategy.start + strategy.jumps[0] == 10, fact.key
+
+
+def test_a_bond_is_drawn_whole():
+    """Make Five and Make Ten are about the pair, so the line starts at nought
+    and shows both parts rather than counting on from one of them."""
+    assert LEVELS_BY_ID["tens"].facts[0].strategy.jumps == (0, 10)
+    fact = next(f for f in LEVELS_BY_ID["fives"].facts if (f.a, f.op) == (3, "+"))
+    assert fact.strategy == Strategy(0, (3, 2))
+
+
+def test_times_facts_are_equal_hops():
+    for fact in LEVELS_BY_ID["fives_times"].facts:
+        strategy = fact.strategy
+        assert strategy.start == 0
+        assert strategy.jumps == (fact.a,) * fact.b, fact.key
+
+
+def test_the_worked_examples():
+    def strategy(a, op, b, result):
+        return next(
+            f.strategy for f in EVERY_FACT if (f.a, f.op, f.b, f.result) == (a, op, b, result)
+        )
+
+    assert strategy(8, "+", 6, 14).jumps == (2, 4)
+    assert strategy(15, "-", 7, 8).jumps == (-5, -2)
+    assert strategy(5, "×", 7, 35).jumps == (5,) * 7
+
+
+def test_orientation_does_not_change_the_route():
+    fact = LEVELS_BY_ID["bridge"].facts[0]
+    assert Question(fact, True).strategy == Question(fact, False).strategy == fact.strategy

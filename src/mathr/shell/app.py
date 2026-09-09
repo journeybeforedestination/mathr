@@ -8,7 +8,17 @@ from typing import Mapping
 import pygame
 
 from ..domain.facts import LEVELS, LEVELS_BY_ID
-from ..domain.round import ROCKET, TENNIS, Outcome, Round, Rules, apply, new_round, tick
+from ..domain.round import (
+    ROCKET,
+    TENNIS,
+    Outcome,
+    Round,
+    Rules,
+    apply,
+    dismiss,
+    new_round,
+    tick,
+)
 from ..storage import LevelRecord, Progress, load, merge, save
 from . import draw
 from .audio import Sounds
@@ -347,7 +357,13 @@ class App:
         # without a deadline the ball has nowhere to be.
         timed = True if mode.rules.lives is not None else self.progress.settings.timer
         self.play = Play(
-            round=new_round(LEVELS_BY_ID[level_id], self.rng, timed=timed, rules=mode.rules)
+            round=new_round(
+                LEVELS_BY_ID[level_id],
+                self.rng,
+                timed=timed,
+                rules=mode.rules,
+                history=self.progress.facts,
+            )
         )
         self.screen = "play"
 
@@ -362,6 +378,9 @@ class App:
         play = self.play
         if play is None or play.round.over:
             return
+        # The keystroke that puts the hint away is also entry: he is already
+        # typing the answer, and losing that first digit reads as a dropped key.
+        play.round = dismiss(play.round)
         if value == "<":
             play.entry = play.entry[:-1]
         elif value == "OK":
@@ -455,7 +474,10 @@ class App:
                 self.lose()
             elif outcome is Outcome.POINT:
                 self.concede(struck)
-            elif self.mode == "rocket":
+            elif self.mode == "rocket" and play.round.hint is None:
+                # `warn` sets its own interval from how full the bank is, so
+                # under a stopped clock it degenerates into a metronome at a
+                # fixed rate — the opposite of a pulse that quickens.
                 self.warn(play, dt)
 
         if play.since_launch is not None:
@@ -558,6 +580,14 @@ class App:
         if play.since_launch is not None:
             self.render_win(play)
             return
+        if play.round.hint is not None:
+            draw.draw_number_line(
+                self.canvas,
+                self.fonts["mid"],
+                self.fonts["tiny"],
+                play.round.hint.strategy,
+                play.round.hint.prompt,
+            )
         self.render_entry(play)
 
     def render_rocket(self, play: Play) -> None:
@@ -605,7 +635,13 @@ class App:
         )
 
     def render_entry(self, play: Play) -> None:
-        draw.text(self.canvas, self.fonts["big"], play.round.current.prompt, (940, 210), draw.INK)
+        if play.round.hint is None:
+            # The hint carries its own prompt: in the rocket the queue has
+            # already moved on, so drawing both would put two questions on
+            # screen at once.
+            draw.text(
+                self.canvas, self.fonts["big"], play.round.current.prompt, (940, 210), draw.INK
+            )
         box = pygame.Rect(840, 280, 200, 96)
         colour = draw.INK
         if play.flash_left > 0 and play.flash is not None:

@@ -15,6 +15,7 @@ from mathr.domain.round import (
     TENNIS,
     Outcome,
     apply,
+    dismiss,
     new_round,
     tick,
 )
@@ -201,7 +202,9 @@ def test_a_ball_that_gets_past_him_scores_a_point_and_serves_again():
 def test_three_points_lose_the_match():
     round_ = rally()
     for expected in (Outcome.POINT, Outcome.POINT, Outcome.LOST):
-        round_, outcome = tick(round_, 99.0)
+        # Each lost ball leaves a hint up, and the clock stays stopped until it
+        # is dismissed — which is what the next keystroke does in the game.
+        round_, outcome = tick(dismiss(round_), 99.0)
         assert outcome is expected
     assert round_.failed and round_.points == 3 and not round_.launched
 
@@ -219,3 +222,62 @@ def test_a_wrong_answer_leaves_the_ball_in_the_air():
 def test_a_round_with_lives_cannot_be_untimed():
     with pytest.raises(ValueError):
         new_round(LEVELS_BY_ID["tens"], random.Random(0), timed=False, rules=TENNIS)
+
+
+# --- the hint stops every clock ---------------------------------------------
+
+
+def test_no_clock_runs_while_a_hint_shows():
+    round_, _ = tick(started(), 2.0)
+    missed, _ = wrong(round_)
+    assert missed.hint is not None
+    after, outcome = tick(missed, 10.0)
+    assert outcome is None
+    assert after.seconds_left == missed.seconds_left
+    assert after.on_current == missed.on_current == 0.0
+    assert after.elapsed == missed.elapsed
+
+
+def test_dismissing_starts_them_again():
+    missed, _ = wrong(started())
+    resumed = dismiss(missed)
+    assert resumed.hint is None
+    after, _ = tick(resumed, 2.0)
+    assert after.seconds_left == pytest.approx(missed.seconds_left - 2.0)
+    assert after.on_current == pytest.approx(2.0)
+
+
+def test_hint_reading_time_never_reaches_the_record():
+    """The weighted deck reads Tally.seconds; time spent reading a hint about a
+    fact would push that fact to the front of the next deck, hint and all."""
+    round_, _ = tick(started(), 1.0)
+    missed, _ = wrong(round_)
+    stared, _ = tick(missed, 30.0)
+    key = stared.current.key
+    answered, _ = right(dismiss(stared))
+    assert answered.attempts[key].seconds == pytest.approx(0.0)
+
+
+def test_a_correct_answer_clears_the_hint():
+    missed, _ = wrong(started())
+    after, _ = right(dismiss(missed))
+    assert after.hint is None
+
+
+def test_a_ball_that_gets_past_him_explains_the_fact_he_never_answered():
+    round_ = rally()
+    missed = round_.current
+    after, _ = tick(round_, 99.0)
+    assert after.hint == missed
+
+
+def test_a_wrong_answer_in_tennis_explains_without_touching_the_queue():
+    after, _ = wrong(rally())
+    assert after.hint == after.current
+
+
+def test_an_abduction_leaves_no_hint():
+    """The failure screen owns the display, and its animation runs on the clock
+    a hint would stop."""
+    dead, outcome = tick(started(), 99.0)
+    assert outcome is Outcome.LOST and dead.hint is None

@@ -529,3 +529,74 @@ def draw_mini_court(surface, rect: pygame.Rect, now: float) -> None:
     x = inset.centerx + math.sin(now * 0.9) * inset.width * 0.18 * travel
     y = inset.top + inset.height * travel
     pygame.draw.circle(surface, BALL, (int(x), int(y)), int(4 + 9 * travel))
+
+
+# --- the number line --------------------------------------------------------
+# The picture drawn on a miss. It gets the left half, which is free in both
+# modes: the rocket sits at x 110-410 behind it, the court spans x 75-625, and
+# the keypad at x >= 700 stays clear — which matters, because in tennis he
+# retypes the same answer while the hint is up.
+
+HINT_BOX = pygame.Rect(60, 220, 600, 420)
+HINT_MARGIN = 56  # room for the end labels, which sit under the outermost dots
+
+
+def _hint_positions(strategy) -> tuple[int, ...]:
+    place = strategy.start
+    places = [place]
+    for jump in strategy.jumps:
+        place += jump
+        places.append(place)
+    return tuple(places)
+
+
+def draw_number_line(surface, font, label_font, strategy, prompt: str, rect=HINT_BOX) -> None:
+    """The route to the answer: a hop per step, labelled and signed.
+
+    The renderer owns the span, because the domain hands over numbers only. It
+    also owns the degenerate shapes those numbers really produce: a jump of zero
+    (`0 + 5`, `5 - 0`), which draws as a labelled dot rather than being special
+    cased away, and an empty jump list (`2 x 0`), which is a single dot.
+    """
+    pygame.draw.rect(surface, PANEL, rect, border_radius=18)
+    pygame.draw.rect(surface, ACCENT, rect, width=3, border_radius=18)
+    text(surface, font, prompt, (rect.centerx, rect.top + 48), INK)
+
+    places = _hint_positions(strategy)
+    low, high = min(places), max(places)
+    baseline = rect.bottom - 96
+    left, right = rect.left + HINT_MARGIN, rect.right - HINT_MARGIN
+
+    def at(value: int) -> int:
+        # A line with no width to it — every hop was zero — puts its one dot in
+        # the middle rather than dividing by nothing.
+        if high == low:
+            return rect.centerx
+        return int(left + (right - left) * (value - low) / (high - low))
+
+    pygame.draw.line(surface, DIM, (rect.left + 30, baseline), (rect.right - 30, baseline), 3)
+
+    for index, jump in enumerate(strategy.jumps):
+        start_x, end_x = at(places[index]), at(places[index + 1])
+        peak = baseline - 46
+        pygame.draw.lines(
+            surface,
+            GOOD if jump >= 0 else ACCENT,
+            False,
+            [(start_x, baseline), ((start_x + end_x) // 2, peak), (end_x, baseline)],
+            4,
+        )
+        sign = "+" if jump >= 0 else "−"
+        text(
+            surface,
+            label_font,
+            f"{sign}{abs(jump)}",
+            ((start_x + end_x) // 2, peak - 20),
+            GOOD if jump >= 0 else ACCENT,
+        )
+
+    for index, place in enumerate(places):
+        x = at(place)
+        last = index == len(places) - 1
+        pygame.draw.circle(surface, ACCENT if last else HULL, (x, baseline), 9 if last else 7)
+        text(surface, label_font, str(place), (x, baseline + 30), ACCENT if last else DIM)

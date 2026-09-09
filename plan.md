@@ -779,6 +779,398 @@ the level screen), the parent-facing view of weak facts, two-digit addition with
 regrouping, adaptive difficulty, and packaging beyond `uv run mathr`.
 ---
 
+## Learning feedback: a number line on a miss, and a deck that knows what is slow
+
+### What changes
+
+A wrong answer stops being a red flash and becomes a picture. When he misses —
+or, in tennis, when the ball gets past him — the clock stops, and a number line
+draws the route to the answer over the left half of the screen: `8 + 6` as a
+jump of 2 to ten and a jump of 4 past it, `5 × 7` as seven jumps of five. It
+clears when he types the next digit. Separately, the deck stops being a uniform
+shuffle: facts he answers slowly are ordered early, so a ten-part round spends
+its questions where his time is actually going. No new screen, no new mode, no
+new file in `progress.json`.
+
+Both changes are argued from `research/math-education.md` (on branch
+`worktree/rapid-meadow-32ee`, commit `79c74c3` — **not on `main`**, and
+`research/` is an empty directory here). §2.3 of that document is the case for
+the first: elaborated feedback measures *d ≈ 0.49* against *d ≈ 0.05* for
+correct/incorrect alone. §1.1 and §1.3 are the case for the second.
+
+### The load-bearing decision: the pause is a rule, so `hint` lives in `Round`
+
+The hint has to stop the clock, and stopping the clock is not a shell concern.
+`CLAUDE.md` already states the general form of this — *"Pacing is a rule, so the
+clock is in the domain"* — but the concrete failure is worth walking, because
+the shell-side alternative looks obviously simpler and is wrong.
+
+Suppose the hint were a `Play` field in `shell/app.py` with `App.update`
+skipping `tick` while it shows, the way it already skips `tick` during a volley.
+Play a `bridge` round in the rocket:
+
+1. `seconds_per_part = 5.0`, so the round opens at `5.0 × GRACE_PARTS` = 25s
+   (`round.py:19`, `round.py:53`).
+2. He misses `13 − 6`. The hint draws. He reads it for four seconds — which is
+   the point of showing it.
+3. `App.update` skipped `tick`, so `seconds_left` is untouched. Good so far.
+4. But `tick` is also what accumulates `on_current` (`round.py:163`), and
+   `apply` folds `on_current` into the per-fact `Tally` (`round.py:209`).
+   Skipping `tick` in the shell keeps the reading time out of the record only by
+   accident of where the skip was written.
+5. Now the next person adds a second reason to pause — a "well done" hold, a
+   parent-view overlay — and puts the skip somewhere else, or pauses only the
+   clock and not the timer. Reading time lands in `Tally.seconds`.
+6. `Tally.seconds` is what the new deck weighting reads. Hint-reading time
+   inflates the weight of the fact he was just shown, which pushes that fact to
+   the front of the next deck, which shows the hint again.
+
+The failure is a feedback loop between two features that never mention each
+other, and its symptom is "he keeps getting the same questions", which names
+nothing. Putting `hint: Question | None` on `Round` and having `tick` return
+early while it is set makes all three clocks — `seconds_left`, `on_current`,
+`elapsed` — stop together by construction, and makes it testable without
+opening a window.
+
+It also pays for itself twice: `App.ball` derives the ball's height from
+`seconds_left` (`app.py:401`), so a frozen clock holds the tennis ball in
+mid-air with no extra code.
+
+### The evidence that chose the signal
+
+From the user's live `~/.local/share/mathr/progress.json` at the time of the
+dig — 105 answers over 76 distinct facts, 45 of them seen exactly once:
+
+- **Four facts have ever been answered wrong.** Two of those (`5 − ? = 5` and
+  `9 + 1 = ?`) were wrong in under three seconds, with the same facts right on
+  other attempts. Slips, not ignorance — exactly the case §1.3 of the research
+  says a streak rule punishes.
+- **The slow facts are all bridging facts**: `6+9` 23.6s, `13−6` 18.6s, `13−8`
+  13.6s, against `seconds_per_part = 5.0` for that level. One fact eating the
+  entire 25s grace bank is why `bridge` reads `launches: 0, failures: 2`.
+
+So the weighting is on **mean response time**, not on wrong counts, which would
+barely fire. A wrong answer's thinking time is already folded into
+`Tally.seconds` regardless of correctness (`round.py:209` records `on_current`
+on both paths), so slow-and-wrong floats up without a separate term.
+
+The same file shows `everything`, `fives_times` and `tens_times` have **never
+been played** — the interleaved pool the research ranks highest already exists
+and he has never picked the card. Deliberately no change; see *Accepted with
+known risk*.
+
+### The steps
+
+Steps 1 and 2 are independent of each other and both must land before step 3,
+which needs data to draw and a stopped clock to draw it against. Step 4 touches
+neither and can land in any order; it is last because it is the one that changes
+what he sees on screen the least.
+
+---
+
+**Step 1 — `Fact.strategy` in `domain/facts.py`.**
+
+Add a frozen `Strategy(start: int, jumps: tuple[int, ...])` and a `strategy`
+property on `Fact`, beside the existing `sides` (`facts.py:37`) and `prompt`
+(`facts.py:44`). Pure numbers: no coordinates, no colours, no span. The span the
+line is drawn across is the shell's business.
+
+Derivation, from `(a, op, b, result)` only:
+
+| case | start | jumps |
+|---|---|---|
+| `+`, `result ≤ 10` | `0` | `(a, b)` |
+| `+`, `result > 10` | `a` | `(10 - a, result - 10)` |
+| `−` , `a > 10 ≥ result` | `a` | `(-(a - 10), -(10 - result))` |
+| `−`, otherwise | `a` | `(-b,)` |
+| `×` | `0` | `(a,) * b` |
+
+Worked: `8 + 6 = 14` → `start 8, jumps (2, 4)`. `15 − 7 = 8` → `start 15,
+jumps (-5, -2)` (`_from_pair` stores the total in `Fact.a`, so `a` is the
+minuend — `facts.py:81`). `6 + 4 = 10` → `start 0, jumps (6, 4)`, the whole
+bond, which is what Make Five and Make Ten are for. `5 × 7 = 35` →
+`start 0, jumps (5,)*7`.
+
+**`blank` is not an input.** The picture always shows the complete true
+equation; showing the route *and* the answer is the intervention. This also
+disposes of a latent hazard: `Fact` permits `blank == "a"` but `_from_pair` and
+`_times_pair` only ever produce `"b"` and `"result"` — verified across all 278
+facts — so a `strategy` that ignored `blank` cannot be wrong about a case that
+does not exist.
+
+Tests, in `tests/test_facts.py`: every fact in `EVERYTHING` produces a strategy
+whose jumps sum from `start` to the correct endpoint (`result` for `+`/`×`,
+`result` for `−` counting back from `a`); bridging facts produce exactly two
+jumps with the first landing on 10; times facts produce `b` equal jumps.
+
+Falsifies no documentation.
+
+---
+
+**Step 2 — `hint` in `domain/round.py`.**
+
+`Round` gains `hint: Question | None` (`Round` is at `round.py:79`). One field
+carries both "the clock is stopped" and "this is the question being drawn", so
+the two can never disagree.
+
+- `new_round` (`round.py:113`) sets it to `None`.
+- `tick` (`round.py:150`) returns `(round, None)` unchanged when `hint` is set —
+  place this beside the existing `if round.over` guard so all three clocks stop
+  together. On the `Outcome.POINT` path (`round.py:180`) it sets
+  `hint=round.current`, the ball he never answered. On `Outcome.LOST` it does
+  **not**: the round is over and the failure screen owns the display.
+- `apply` (`round.py:202`) sets `hint=question` when the answer is wrong and
+  `None` when it is right — on both the early tennis return (`round.py:212`) and
+  the main path. Because `apply` always writes the field, a stale hint cannot
+  survive an answer.
+- A `dismiss(round)` reducer clears it. The shell calls it; the domain never
+  clears it on its own.
+
+Gate: `uv run pytest`. **`tests/test_clock.py:201`
+(`test_three_points_lose_the_match`) will fail** — it calls `tick` three times
+in a row, and the second call now no-ops against the hint the first one set.
+Fix it by calling `dismiss` between ticks, which is what the game does. Verify
+the rest of the suite: `test_a_wrong_answer_costs_a_part_but_no_extra_time`
+(`test_clock.py:84`) and `test_a_wrong_answer_leaves_the_ball_in_the_air`
+(`test_clock.py:209`) do not tick after the miss and should pass untouched.
+
+New tests in `test_clock.py`: the clock does not drain while a hint is set;
+`on_current` does not grow while a hint is set; `dismiss` resumes both; a
+timeout in tennis sets the hint to the question that timed out; an abduction
+does not set one.
+
+Falsifies `CLAUDE.md`, *Invariants that break silently*: **"`tick` accumulates
+per-question time even when untimed"** — still true, but now "except while a
+hint is showing, which is the whole reason the hint is in the domain." Update it
+in this step.
+
+---
+
+**Step 3 — the widget in `shell/draw.py`, wired in `shell/app.py`.**
+
+`draw.draw_number_line(surface, font, strategy, prompt, rect)`: a horizontal
+line, a dot at `start` and at each cumulative position, an arc and a signed
+label (`+2`, `−5`) above each jump, and the question's own prompt above the
+whole thing — the hint carries its prompt because in the rocket `apply` has
+already advanced the queue, so `round.current` is no longer the fact being
+explained.
+
+Placement: over the left half, roughly x 60–660, y 220–640. Free in both modes —
+`ROCKET_ORIGIN = (110, 130)` (`draw.py:34`) and the court spans x 75–625
+(`COURT_CENTRE = 350` ± `COURT_NEAR_HALF = 275`, `draw.py:342`/`draw.py:344`) —
+and it leaves the keypad (x ≥ 700, `app.py:128`) untouched, which matters
+because in tennis he retypes the same question while the hint is up. Design
+surface is 1280×800 (`draw.py:13`); everything here is design space.
+
+The renderer owns the span and must handle three degenerate shapes: a jump of
+length 0 (18 of the 278 facts — `0 + 5`, `5 − 0`, `2 × 0` in both blank forms),
+which draws as a dot with a `+0` label rather than being special-cased away; an
+empty `jumps` tuple (`2 × 0` and its siblings), which draws a single dot at the
+start; and ten equal jumps (`10 × 10`), which sets the widest span it must fit.
+
+Wiring in `app.py`:
+
+- `render_play` (`app.py:541`) draws the hint after the mode renderer and before
+  `render_entry` (`app.py:607`), and skips `render_entry`'s prompt line while a
+  hint is up — otherwise two different questions are on screen at once.
+- `press` (`app.py:361`) calls `dismiss` first when `round.hint` is set, then
+  proceeds; the digit that dismisses also counts as entry, so no keystroke is
+  lost. Both the keyboard path (`app.py:260`) and the keypad-click path
+  (`app.py:271`) already funnel through `press`, so this is one place.
+- `update` (`app.py:436`) must skip `warn` while a hint is set. `tick` now
+  returns `seconds_left` unchanged, so the low-bank pulse (`app.py:469`) would
+  otherwise keep beeping at a fixed rate under a stopped clock.
+
+Gate: `uv run mathr`, miss a `bridge` fact in the rocket and let a ball past in
+tennis. Watch for: the line reads at a glance, the ball is frozen rather than
+falling, the keypad is not covered, and the first digit both clears the hint and
+lands in the entry box.
+
+Falsifies `README.md:39–40` (rocket, "**Wrong** → the top part tumbles off…")
+and `README.md:51` ("**Wrong** → nothing. The ball is still in the air…"), and
+the clock description around `README.md:87–109`. Update all three in this step.
+
+---
+
+**Step 4 — the weighted deck.**
+
+`shuffled` (`facts.py:74`) gains an optional third parameter,
+`weights: Mapping[str, float] | None = None`. When it is `None` the function
+must behave *byte-identically* to today — same `rng.sample`, same interleaved
+`rng.random() < 0.5` orientation flip — or every seeded test moves. When it is
+given, order by the standard weighted sample without replacement: key each fact
+`rng.random() ** (1 / w)` and sort descending.
+
+The weights are computed in `domain/round.py`, not in `facts.py`. `Tally` lives
+in `round.py` (`round.py:61`) and `round.py` already imports `facts`
+(`round.py:14`); computing weights in `facts.py` would need `Tally` and close
+the cycle. `new_round` (`round.py:113`) gains
+`history: Mapping[str, Tally] | None = None`, turns it into a plain
+`key -> float` map, and hands that to `shuffled`. `facts.py` never learns what a
+`Tally` is.
+
+The weight of a fact with `answered > 0` is
+`clamp(tally.seconds / tally.answered / level.seconds_per_part, FLOOR, CEILING)`;
+an unseen fact weighs `1.0`, so it still appears rather than being crowded out —
+45 of 76 facts have `answered == 1`, so there is not enough history to trust a
+verdict on any of them. Start at `WEIGHT_FLOOR = 0.5`, `WEIGHT_CEILING = 4.0`.
+
+The full pool stays in the deck; only its order is biased. A ten-part round
+draws from the front, so ordering *is* selection, and no level can ever empty
+its deck — which is what keeps this from needing a "mastered" state on the level
+screen.
+
+`App.start` (`app.py:344`) passes `self.progress.facts` through. No storage
+change at all: no new field, no `version` bump, nothing to migrate.
+
+Tests, in a new `tests/test_select.py`: a fact with a slow mean sorts ahead of a
+fast one across seeds; an unseen fact is not starved; the clamp bounds a single
+outlier (the real 23.6s `6+9` would otherwise weigh 4.7× against `bridge`'s 5.0s
+pace); `shuffled` with no weights is unchanged for a given seed — assert against
+`tests/test_round.py:93` (`test_shuffle_is_deterministic_per_seed`) and
+`tests/test_facts.py:38`.
+
+Falsifies `ideas.md`, *Adaptive difficulty* — currently "**Rejected for v1** as
+complexity without evidence — the per-fact data will show whether it is needed."
+The data did show it. Rewrite that entry as built, keeping what remains: spacing
+across days, mastery as a probability, and retirement of known facts.
+
+Also falsifies the `CLAUDE.md` *Tuning* table (`CLAUDE.md:81–89`), which must
+gain `WEIGHT_FLOOR` and `WEIGHT_CEILING` — they are dials meant to be turned
+after watching him, exactly like `RETRY_GAP`.
+
+### Traps
+
+**A hint set on the `LOST` path strands the round.** `tick` returns early while
+`hint` is set, and `App.update` only advances `since_failure` outside that
+branch. Set a hint on an abduction and the failure animation is driven by a
+clock that has stopped. The failure screen owns the display; `LOST` sets no
+hint. Symptom: the beam freezes half-drawn and *Try again* never appears.
+
+**The `warn` pulse must be skipped while a hint shows.** `warn` (`app.py:469`)
+sets its own interval from `seconds_left / threshold`. Under a stopped clock
+that ratio is constant, so it degenerates into a metronome at a fixed rate
+while he reads — and its own docstring says the pulse exists to *quicken*.
+Nothing raises.
+
+**`shuffled(facts, rng)` with no weights must consume the rng exactly as it does
+today.** Two tests pin shuffle determinism per seed (`test_round.py:93`,
+`test_facts.py:38`), and the function interleaves the orientation flip with the
+sample (`facts.py:74–78`), so a "harmless" restructuring of the unweighted path
+changes which questions are flipped as well as their order. Add the weighted
+path as a branch; do not rewrite the existing one.
+
+**Weights must not be computed in `facts.py`.** `round.py` imports `facts`
+(`round.py:14`). Reaching back for `Tally` closes an import cycle that Python
+reports as a partially-initialised module from whichever side imported first —
+a message that names neither the cycle nor the design mistake.
+
+**Hint-reading time must never reach `Tally.seconds`.** It is the input to the
+deck weighting, and inflating it for the fact just explained creates the loop
+described in the load-bearing decision. This is guaranteed only by `tick`
+returning before it touches `on_current` (`round.py:163`) — not by anything in
+the shell.
+
+**`Fact.key` is untouched by all of this,** and must stay that way.
+`CLAUDE.md`: *"Changing its shape orphans every count already recorded and
+needs a `version` bump plus a migration."* Nothing in this plan writes a new
+field to `progress.json`; the weighting reads what is already there.
+
+### Considered and rejected
+
+- **A line of text instead of a drawing** (`8 + 6 → 8 + 2 + 4`). This was my
+  recommendation during the dig, on the grounds that a string crosses the domain
+  seam cleanly and needs one `draw.text` call. The user chose the drawing, and
+  the reason it is the better call is that it costs almost nothing extra: the
+  domain still hands over numbers, and one renderer covers all three pools. It
+  also lands Siegler's number line (§3.2 — number-line estimation is the
+  strongest longitudinal predictor in the research) for free. Recorded because a
+  fresh context will feel the same pull toward the string.
+- **A bar model for the bond levels, a line for the rest.** More natural for
+  Make Five and Make Ten, but it means two renderers and a kind tag on the
+  domain shape for the shell to switch on. One widget, one seam.
+- **Ten frames.** The manipulative he most likely sees at school, and excellent
+  for bridging — but `5 × 10` needs ten of them and the widget stops scaling.
+- **A fixed hint duration, or a tap-to-continue button.** A duration is one more
+  number to tune and cuts off a slow reader mid-sentence; a button adds a press
+  to a screen made only of keypad. Typing the next digit is self-paced and
+  already the thing he was going to do.
+- **Holding the rocket's queue until the hint is dismissed** so the missed
+  question stays current. Coherent, but it makes `Rules.wrong_advances`
+  conditional on the hint, and that dial is load-bearing for tennis
+  (`CLAUDE.md`, *A wrong answer in tennis must not touch the queue*). The hint
+  carries its own prompt instead.
+- **Weighting on right/wrong, or on a streak.** His data has four wrong answers
+  in 105, two of which are typos. The signal is not there, and a streak rule
+  punishes a slip.
+- **Bayesian knowledge tracing** (§1.3). Four parameters to fit against 105
+  observations. Revisit when there are thousands.
+- **Weighted sampling with replacement**, so a mastered fact may not appear for
+  many rounds. Sharper, but the deck stops being the pool and `_advance`'s
+  replay-when-low rule (`round.py:145`) needs rethinking.
+- **Retiring mastered facts outright** (true DT–PI, §1.4). A fully mastered
+  `fives` empties its deck, and the level screen then needs a "done" state — a
+  UI decision, not a policy change.
+- **`last_seen` and spaced review across days** (§2.2, *g* ≈ 0.28). It is the
+  weakest of the four ideas, needs a date injected into the domain, and 45 of 76
+  facts have been seen exactly once — there is nothing to space on yet.
+
+### Accepted with known risk
+
+- **Hints are always on, with no menu toggle.** The concern is that his
+  response-time record now mixes two regimes and nothing in `progress.json` says
+  which. Accepted because a third toggle beside Sound and Timer
+  (`app.py:90`) is one more thing for a seven-year-old to poke, and because
+  every study in §2.3 provided feedback — none made it optional. Revisit if the
+  per-fact means visibly shift after this lands and you need to compare against
+  the pre-hint history.
+- **Nothing is done about `Everything` never being played.** The interleaved
+  pool is the best-evidenced practice in the research (*d ≈ 1.21*) and he has
+  never chosen the card. The concern is that the best mode goes unused
+  indefinitely. Accepted because deciding now means guessing why a seven-year-old
+  skips a card. **Trigger to revisit: `launches` for `everything` still 0 after
+  the next few sessions** — the counter already records this, at no cost.
+- **The hint panel covers the rocket, the alien and any falling parts.**
+  Accepted: the rocket is static and the clock is stopped, so nothing live is
+  hidden. Revisit if he reports losing track of how many parts he has.
+
+### Environment and coverage notes
+
+- The research document is **not on `main`**. It is at
+  `research/math-education.md` on `worktree/rapid-meadow-32ee`, commit
+  `79c74c3`; `research/` on `main` is an empty directory. Read it with
+  `git show 79c74c3:research/math-education.md`. Whether it should be merged to
+  `main` is the user's call.
+- The evidence in *The evidence that chose the signal* came from the user's live
+  `~/.local/share/mathr/progress.json`, which is outside the repository and will
+  have moved on. Re-read it before tuning `WEIGHT_FLOOR` / `WEIGHT_CEILING`.
+- **Partial reading.** `shell/draw.py` was read by structure and grep, not in
+  full — the drawing primitives available for the number line (arcs, dashed
+  lines, font sizes beyond `draw.text` at `draw.py:223`) still need reading
+  before step 3. `shell/audio.py`, `tests/test_scaling.py` and
+  `tests/test_storage.py` were not read at all; `tests/test_round.py` and
+  `tests/test_clock.py` were read in the regions cited above, not end to end.
+- Whether the hint should make a sound is undecided and unexamined; `audio.py`
+  was not read. `Sounds.play` fails silently on an unknown name
+  (`CLAUDE.md`), so a clip added carelessly here is silent with no error.
+- `pytest` is not installed system-wide; the suite is `uv run pytest` and takes
+  about 0.1s. The suite opens no window — the three things it cannot reach are
+  listed in `CLAUDE.md`, *Testing, and what testing cannot reach*.
+- The user creates commits and anything on GitHub. Do not commit or push without
+  asking.
+
+### Out of scope, and where it went
+
+Recorded in `ideas.md`, not built here: spacing across days, mastery as a
+probability, retirement of mastered facts, and the parent-facing trend probe
+(§1.2's fixed mixed measurement) — all of them waiting on more than 105 answers.
+The `everything` card's visibility is left to the `launches` counter. The
+number-line widget from step 3 is most of a number-line *placement* mode (§3.2),
+but that is a new mode with a non-boolean outcome and belongs in `ideas.md`, not
+here.
+
+---
+
 ## Traps
 
 **Mouse coordinates must be inverse-mapped through the design-surface scale.**

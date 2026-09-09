@@ -21,6 +21,12 @@ BANK_PARTS = 4  # and can never bank more than this many afterwards
 
 BALL_FLIGHT = 1.5  # how many problems' worth of time a served ball takes to land
 
+#: A fact is weighted by how long he takes on it, against the pace its level
+#: asks for. Clamped, because one 24-second stall on a 5-second fact would
+#: otherwise crowd the deck around a single bad morning.
+WEIGHT_FLOOR = 0.5
+WEIGHT_CEILING = 4.0
+
 
 class Outcome(Enum):
     CORRECT = "correct"
@@ -92,6 +98,15 @@ class Round:
     seconds_left: float | None  # None is an untimed round
     on_current: float  # spent on the question showing now
     elapsed: float  # wall time in the round, for the best-time record
+    hint: Question | None  # the miss being explained; every clock stops while set
+    """One field for both "the clock is stopped" and "this is the question being
+    drawn", so the two can never disagree.
+
+    Reading time must not reach `Tally.seconds`: that is what the deck weighting
+    reads, and time spent staring at a hint would push the fact just explained to
+    the front of the next deck, which shows the hint again. `tick` returning
+    early is the only thing that guarantees it — no arrangement of the shell can.
+    """
 
     @property
     def current(self) -> Question:
@@ -110,13 +125,43 @@ class Round:
         return self.seconds_left is not None
 
 
+def _weights(level: Level, history: Mapping[str, Tally]) -> Mapping[str, float]:
+    """Mean response time against the level's own pace, per fact.
+
+    Computed here rather than in `facts.py` because `Tally` lives here and
+    `round` already imports `facts`; reaching the other way closes an import
+    cycle. A fact never answered is absent, and `shuffled` weighs it 1.0 — with
+    most facts seen once or not at all there is no verdict to pass on them yet.
+
+    The signal is time, not wrongness: his misses are few and half of them are
+    typos, and a wrong answer's thinking time is folded into `Tally.seconds`
+    regardless, so slow-and-wrong floats up without a second term.
+    """
+    return {
+        key: min(
+            WEIGHT_CEILING,
+            max(WEIGHT_FLOOR, tally.seconds / tally.answered / level.seconds_per_part),
+        )
+        for key, tally in history.items()
+        if tally.answered
+    }
+
+
 def new_round(
-    level: Level, rng: random.Random, timed: bool = True, rules: Rules = ROCKET
+    level: Level,
+    rng: random.Random,
+    timed: bool = True,
+    rules: Rules = ROCKET,
+    history: Mapping[str, Tally] | None = None,
 ) -> Round:
     if not timed and rules.lives is not None:
         # A rally has nowhere to put the ball without a deadline to fly along.
         raise ValueError("a round with lives cannot be untimed")
-    deck = shuffled(level.facts, rng)
+    # The whole pool stays in the deck and only its order is biased: a ten-part
+    # round draws from the front, so ordering is selection, and no level can
+    # ever empty itself into a "mastered" state the level screen would have to
+    # show.
+    deck = shuffled(level.facts, rng, _weights(level, history) if history else None)
     return Round(
         level_id=level.id,
         rules=rules,
@@ -133,6 +178,7 @@ def new_round(
         seconds_left=level.seconds_per_part * rules.opening_parts if timed else None,
         on_current=0.0,
         elapsed=0.0,
+        hint=None,
     )
 
 
@@ -152,9 +198,12 @@ def tick(round: Round, dt: float) -> tuple[Round, Outcome | None]:
 
     Time on the current question accumulates even in an untimed round: the
     per-fact response times are worth having either way, and practice is
-    where the slowest facts actually surface.
+    where the slowest facts actually surface. The one exception is a hint, and
+    it is the whole reason the hint lives in the domain: `seconds_left`,
+    `on_current` and `elapsed` all stop together here, by construction, rather
+    than wherever the shell happened to put its skip.
     """
-    if round.over:
+    if round.over or round.hint is not None:
         return round, None
 
     running = replace(
@@ -172,6 +221,8 @@ def tick(round: Round, dt: float) -> tuple[Round, Outcome | None]:
     lives = round.rules.lives
     points = round.points + 1
     if lives is None or points >= lives:
+        # No hint on the way out: the failure screen owns the display, and a
+        # hint here would stop the very clock the failure animation runs on.
         return replace(running, seconds_left=0.0, points=points, failed=True), Outcome.LOST
     # The ball got past him: it counts against him, the fact comes back three
     # questions later exactly as a missed one does, and the opponent serves again.
@@ -182,6 +233,7 @@ def tick(round: Round, dt: float) -> tuple[Round, Outcome | None]:
             points=points,
             seconds_left=round.cap,
             on_current=0.0,
+            hint=round.current,
         ),
         Outcome.POINT,
     )
@@ -199,6 +251,12 @@ def _credit(round: Round) -> float | None:
     return max(round.seconds_left, min(paid, round.cap))
 
 
+def dismiss(round: Round) -> Round:
+    """Put the hint away and start every clock again. Only the shell calls this:
+    the hint is self-paced, and the domain has no idea how long a read takes."""
+    return replace(round, hint=None) if round.hint is not None else round
+
+
 def apply(round: Round, given: int) -> tuple[Round, Outcome]:
     if round.over:
         return round, Outcome.WON if round.launched else Outcome.LOST
@@ -213,6 +271,9 @@ def apply(round: Round, given: int) -> tuple[Round, Outcome]:
         missed=round.missed + (not correct),
         attempts={**round.attempts, question.key: tallied},
         on_current=0.0,
+        # Written on every path, right or wrong, so a stale hint cannot survive
+        # an answer.
+        hint=None if correct else question,
     )
     if not correct and not rules.wrong_advances:
         # The ball is still in the air; he may retype while it falls. Touching

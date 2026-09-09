@@ -36,9 +36,9 @@ Type the missing number on the on-screen keypad or the real keyboard, then
 **Rocket Builder**
 
 - **Right** → a part bolts on, bottom-up, and the clock is credited.
-- **Wrong** → the top part tumbles off, and that fact comes back three questions
-  later, so he has to actually retrieve it rather than echo an answer he was
-  just shown.
+- **Wrong** → the top part tumbles off, the clock stops, and a number line draws
+  the route to the answer. That fact comes back three questions later, so he has
+  to actually retrieve it rather than echo an answer he was just shown.
 - **Ten parts** → countdown and launch.
 - **Clock empties** → the saucer beams the rocket up, the parts scatter, and the
   round ends with *Try again*.
@@ -48,12 +48,14 @@ Type the missing number on the on-screen keypad or the real keyboard, then
 - **Right** → he swings, and the ball flies back over the net before the
   opponent serves a new one. The clock waits for it: a rally that resets the
   instant the answer lands never looks *hit*.
-- **Wrong** → nothing. The ball is still in the air and he can retype while it
-  falls; a mistype on a two-digit keypad is cheap and common, and punishing it
-  would make the game about typing.
+- **Wrong** → the ball hangs where it was and the number line shows the route.
+  He can retype as soon as he has read it; a mistype on a two-digit keypad is
+  cheap and common, and punishing it would make the game about typing. The
+  question is not re-asked and the queue does not move — it is still on screen.
 - **Ten returns** → the trophy.
-- **A ball gets past him** → a point to the opponent, that fact comes back three
-  questions later, and the next one is served. **Three points** loses the match.
+- **A ball gets past him** → a point to the opponent, the number line for the
+  fact he never answered, and that fact comes back three questions later.
+  **Three points** loses the match.
 
 ### The levels
 
@@ -101,6 +103,32 @@ could share a screen with an equation he is trying to solve.
 
 A wrong answer costs a part and the seconds it burned. It carries no extra time
 penalty on top of that.
+
+### The number line
+
+A miss is worth more than a red flash. When he gets one wrong — or lets a ball
+past — every clock stops and the left half of the screen draws the route to the
+answer: `8 + 6` as a hop of 2 up to ten and a hop of 4 past it, `15 − 7` as 5
+back to ten and 2 more, `5 × 7` as seven hops of five. It shows the whole true
+equation, answer included; the route *and* the answer together are the point.
+
+It clears the moment he types the next digit, and that digit still lands in the
+entry box — no button, no fixed duration, nothing to wait out. Reading time
+counts against nothing: the round clock, the per-question timer and the
+elapsed-time record all stop together, so a long read never lands in his
+response times.
+
+### Which questions come up
+
+A round is still a shuffle of the whole pool, but not a flat one. Facts he has
+been slow on are ordered towards the front, weighted by his mean response time
+against the pace that level asks for, so a ten-part round spends its questions
+where his time is actually going. A fact he has never answered sits at the
+middle weight rather than being crowded out — one answer is not a verdict.
+
+The signal is time, not wrongness. He is rarely wrong, and half the wrong
+answers on record were typed in under three seconds with the same fact right
+elsewhere — those are slips, and a rule built on them would punish a slip.
 
 ### The rally clock
 

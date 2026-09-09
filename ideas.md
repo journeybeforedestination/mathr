@@ -52,10 +52,24 @@ their own read of that bundle. A mode with no threat can still simply run
 untimed.
 
 ## Adaptive difficulty
-Weight question selection toward facts he misses. Rejected for v1 as complexity
-without evidence — the per-fact data will show whether it is needed. Response
-times sharpen this: mean seconds per fact separates "does not know it" from
-"knows it slowly", which want different treatment.
+**Built** — see *Learning feedback* in `plan.md`. The data answered the question
+it was rejected on: not the misses (four in 105 answers, half of them typos) but
+the times. The deck is ordered by mean seconds per fact against the level's pace,
+clamped between `WEIGHT_FLOOR` and `WEIGHT_CEILING`, with an unseen fact at 1.0.
+The whole pool stays in the deck; only its order is biased.
+
+What remains is everything that needs more than one session's history:
+
+- **Spacing across days.** A `last_seen` date, so a fact he has not met in a week
+  comes back. It needs a date injected into the domain, and it is the weakest of
+  the ideas on the evidence (*g* ≈ 0.28) — and with most facts seen exactly once
+  there is nothing to space on yet.
+- **Mastery as a probability** rather than a mean, which is what knowledge
+  tracing buys. Four parameters to fit against a hundred observations is fitting
+  noise. Revisit at thousands.
+- **Retiring a mastered fact** from the pool outright. Sharper practice, but a
+  fully mastered level then has an empty deck, and the level screen needs a
+  "done" state to explain it — a UI decision, not a policy change.
 
 ## Timed / speed modes
 **Built** — see *Time pressure* in `plan.md`. A shared bank of seconds per round,
@@ -75,6 +89,15 @@ the menu toggle already covers the case that matters (the clock is too much
 today). Revisit if he starts using the menu toggle *between* levels rather than
 between sessions — that is the signal that the setting belongs to the level and
 not to the session.
+
+## A number-line placement mode
+The hint widget draws a line, its dots and their labels already — most of a mode
+where the question is "put 7 where it goes" and the answer is a position rather
+than a number. Number-line estimation is the strongest longitudinal predictor in
+the research, so the case for it is good. Left out because it is a third mode
+with a non-boolean outcome: `Round` counts right and wrong, and "within two" is
+neither. That is a `Rules` dial at best and a second reducer at worst, and it
+should be decided when the mode is built, not now.
 
 ## Packaging
 Currently `uv run mathr` from the source directory. A desktop entry, or a

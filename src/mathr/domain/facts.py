@@ -7,6 +7,25 @@ assertion.
 
 import random
 from dataclasses import dataclass
+from typing import Mapping
+
+
+@dataclass(frozen=True)
+class Strategy:
+    """The route to an answer, as numbers on a line: where to stand, and the
+    hops from there.
+
+    Numbers only — no span, no coordinates, no colours. What the line is drawn
+    across is the shell's business, which is what lets one widget serve
+    bridging, bonds and times tables alike.
+    """
+
+    start: int
+    jumps: tuple[int, ...]
+
+    @property
+    def end(self) -> int:
+        return self.start + sum(self.jumps)
 
 
 @dataclass(frozen=True)
@@ -45,6 +64,25 @@ class Fact:
         left, right = self.sides
         return f"{left} = {right}"
 
+    @property
+    def strategy(self) -> Strategy:
+        """How to get there, derived from the equation alone.
+
+        `blank` is deliberately not an input: the picture shows the whole true
+        equation, because showing the route *and* the answer is the point.
+        """
+        if self.op == "×":
+            return Strategy(0, (self.a,) * self.b)
+        if self.op == "+":
+            if self.result > 10:
+                # Bridging is the two-step move the level exists to teach, so
+                # it is drawn as two hops rather than one long one.
+                return Strategy(self.a, (10 - self.a, self.result - 10))
+            return Strategy(0, (self.a, self.b))
+        if self.a > 10 >= self.result:
+            return Strategy(self.a, (-(self.a - 10), -(10 - self.result)))
+        return Strategy(self.a, (-self.b,))
+
 
 @dataclass(frozen=True)
 class Question:
@@ -70,12 +108,36 @@ class Question:
         left, right = self.fact.sides
         return f"{right} = {left}" if self.flipped else f"{left} = {right}"
 
+    @property
+    def strategy(self) -> Strategy:
+        return self.fact.strategy
 
-def shuffled(facts: tuple[Fact, ...], rng: random.Random) -> tuple[Question, ...]:
-    """The pool as a deck, each question oriented by the injected rng."""
-    return tuple(
-        Question(fact, rng.random() < 0.5) for fact in rng.sample(facts, len(facts))
+
+def shuffled(
+    facts: tuple[Fact, ...],
+    rng: random.Random,
+    weights: Mapping[str, float] | None = None,
+) -> tuple[Question, ...]:
+    """The pool as a deck, each question oriented by the injected rng.
+
+    With no weights this is a flat shuffle, and stays byte-identical to what it
+    always was: the weighted path is a separate branch rather than a
+    generalisation, because the unweighted one interleaves the orientation flip
+    with the sample and every seeded test pins the result.
+
+    Weighted, it is the standard order statistic for sampling without
+    replacement — key each fact by `random() ** (1 / w)` and take the largest.
+    A heavier fact is only more likely to come early, never certain to, so a
+    round is still a shuffle and the whole pool is still in the deck.
+    """
+    if weights is None:
+        return tuple(
+            Question(fact, rng.random() < 0.5) for fact in rng.sample(facts, len(facts))
+        )
+    keyed = sorted(
+        facts, key=lambda fact: rng.random() ** (1.0 / weights.get(fact.key, 1.0)), reverse=True
     )
+    return tuple(Question(fact, rng.random() < 0.5) for fact in keyed)
 
 
 def _from_pair(a: int, b: int) -> tuple[Fact, ...]:

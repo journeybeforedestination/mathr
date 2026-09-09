@@ -48,12 +48,13 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
-    facts.py      Fact, Question, Level, the seven enumerated pools
-    round.py      Round, Rules, Tally, Outcome, new_round / apply / tick
+    facts.py      Fact, Question, Strategy, Level, the seven enumerated pools
+    round.py      Round, Rules, Tally, Outcome, new_round / apply / tick / dismiss
   storage.py      Progress, Settings, LevelRecord; load / save / merge
   shell/
     app.py        App: event loop, Mode, three screens, all the wiring
-    draw.py       palette, rocket, alien, court, cabinets, buttons, the transform
+    draw.py       palette, rocket, alien, court, cabinets, buttons, number line,
+                  the transform
     audio.py      eight synthesized clips, no asset files
 tests/
   test_facts.py   pool contents, key stability, both orientations
@@ -61,7 +62,14 @@ tests/
   test_clock.py   the time bank and the rally deadline
   test_storage.py round-trip, corruption, merge, backward compatibility
   test_scaling.py the design-surface transform, threat closeness, court geometry
+  test_select.py  the deck weighting, and that an unweighted deck never moved
 ```
+
+`Fact.strategy` is the route to the answer as numbers — a start and a list of
+signed jumps — and `blank` is deliberately not an input, because the picture
+shows the whole true equation. `shell/draw.draw_number_line` owns the span and
+every degenerate shape those numbers really produce: a jump of zero (`0 + 5`),
+an empty jump list (`2 × 0`), and the ten equal jumps of `10 × 10`.
 
 `domain/facts.py` builds each addition level from one rule: each number-bond
 pair yields four questions (`a+b=?`, `a+?=c`, `c−a=?`, `c−?=b`). A times pair
@@ -86,6 +94,8 @@ These are the dials, and they are meant to be turned after watching him play.
 | `RETURN_FLIGHT` | `shell/app.py` | 0.34s | how long his return takes to land |
 | `TENNIS.lives` | `domain/round.py` | 3 | balls past him before the match is lost |
 | `TENNIS.target` | `domain/round.py` | 10 | returns needed to win |
+| `WEIGHT_FLOOR` | `domain/round.py` | 0.5 | how far a fast fact sinks in the deck |
+| `WEIGHT_CEILING` | `domain/round.py` | 4.0 | and how far one slow fact can rise |
 | `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 / 5 | pace, per level |
 
 `seconds_per_part` is the only per-level number; start and cap derive from it
@@ -130,7 +140,37 @@ reward for a correct answer. It is `max(left, min(left + per_part, cap))` — se
 **`tick` accumulates per-question time even when untimed.** Response times are
 worth having either way, and practice mode is where the slowest facts surface.
 Skipping it there would give a mastery record blind to the mode he uses when
-struggling.
+struggling. The one exception is `Round.hint` — see below.
+
+**A hint stops every clock, and that is why it is in the domain.** `tick`
+returns early while `Round.hint` is set, so `seconds_left`, `on_current` and
+`elapsed` stop *together*, by construction. The obvious alternative — a field on
+`Play` and a skip in `App.update`, the way a volley already works — stops
+`seconds_left` and leaves `on_current` running. Hint-reading time then lands in
+`Tally.seconds`, which is the input to the deck weighting, which pushes the fact
+he was just shown to the front of the next deck, which shows the hint again. The
+symptom is "he keeps getting the same questions", which names nothing. The shell
+only ever calls `dismiss`.
+
+**No hint on the `LOST` path.** The failure screen owns the display, and
+`App.update` drives its animation from the clock a hint would stop. Symptom: the
+abduction beam freezes half-drawn and *Try again* never appears.
+
+**`warn` must be skipped while a hint shows.** It sets its own interval from
+`seconds_left / threshold`, and under a stopped clock that ratio is constant —
+the pulse that exists to *quicken* becomes a metronome while he reads. Nothing
+raises.
+
+**`shuffled` with no weights must consume the rng exactly as it always did.**
+Two tests pin shuffle determinism per seed, and the flat path interleaves the
+orientation flip with `rng.sample`, so restructuring it changes which questions
+are flipped as well as their order. The weighted path is a separate branch on
+purpose; do not merge them.
+
+**Deck weights are computed in `round.py`, never in `facts.py`.** `round`
+imports `facts`; reaching back for `Tally` closes an import cycle that Python
+reports as a partially-initialised module from whichever side imported first — a
+message naming neither the cycle nor the mistake.
 
 **Untimed launches must not touch `launches`.** They go to `practice`, or the
 number that means "I beat it" is farmable from the menu toggle. Tennis is always
