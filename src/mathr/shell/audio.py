@@ -107,6 +107,39 @@ def _abducted():
     return _Shape(seconds, wave)
 
 
+def _pock():
+    """The racket. Short and percussive, because it fires on every return."""
+    seconds = 0.09
+
+    def wave(t):
+        thud = math.sin(2 * math.pi * 320 * t)
+        click = math.sin(2 * math.pi * 1800 * t) * math.exp(-t * 90)
+        return (0.7 * thud + 0.6 * click) * _envelope(t, seconds, attack=0.002)
+
+    return _Shape(seconds, wave)
+
+
+def _drop():
+    seconds = 0.45
+
+    def wave(t):
+        pitch = 520 - 380 * (t / seconds)
+        return math.sin(2 * math.pi * pitch * t) * _envelope(t, seconds, attack=0.01)
+
+    return _Shape(seconds, wave)
+
+
+def _cheer():
+    seconds = 0.9
+    notes = (523, 659, 784, 1047)
+
+    def wave(t):
+        pitch = notes[min(len(notes) - 1, int(t / seconds * len(notes)))]
+        return math.sin(2 * math.pi * pitch * t) * _envelope(t, seconds, attack=0.02)
+
+    return _Shape(seconds, wave)
+
+
 class Sounds:
     """Silent by construction if the mixer is unavailable."""
 
@@ -120,6 +153,9 @@ class Sounds:
                 "launch": _tone(_launch_sweep(), amplitude=0.5),
                 "warn": _tone(_warn(), amplitude=0.22),
                 "abducted": _tone(_abducted(), amplitude=0.45),
+                "pock": _tone(_pock(), amplitude=0.45),
+                "drop": _tone(_drop(), amplitude=0.4),
+                "cheer": _tone(_cheer(), amplitude=0.4),
             }
         except pygame.error:
             self._clips = {}

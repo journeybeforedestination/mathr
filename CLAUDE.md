@@ -24,11 +24,16 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 
 - **`domain/` is pure.** No pygame, no I/O, no module-level `random` —
   randomness arrives as an injected `random.Random` so tests are deterministic.
-- **`domain/round.py` knows `parts: int` and a bank of seconds, and nothing
-  about rockets or aliens.** Part names, coordinates and art live in
-  `shell/draw.py`. This is the seam that lets a second game mode reuse all three
-  levels; the moment the reducer imports a part name, the next mode has to fake
-  one or fork it.
+- **`domain/round.py` knows `parts: int`, a bank of seconds and a `Rules`
+  bundle, and nothing about rockets, aliens or tennis balls.** Part names,
+  coordinates and art live in `shell/draw.py`. This is the seam that lets both
+  modes reuse every level; the moment the reducer imports a part name, the next
+  mode has to fake one or fork it.
+- **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`) says what the
+  clock does, what a wrong answer costs, and what an empty clock means. Tennis
+  built as a pure renderer over `ROCKET` compiles, draws, and plays as a
+  different game — the walk-through with real numbers is in `plan.md`, *The
+  load-bearing decision*.
 - **Pacing is a rule, so the clock is in the domain** — a pure
   `tick(round, dt)`, not a timer in the event loop. That is what makes "the bank
   cannot exceed the cap" and "zero ends the round" testable without opening a
@@ -43,24 +48,29 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
-    facts.py      Fact, Level, the three enumerated pools
-    round.py      Round, Tally, Outcome, new_round / apply / tick
+    facts.py      Fact, Question, Level, the seven enumerated pools
+    round.py      Round, Rules, Tally, Outcome, new_round / apply / tick
   storage.py      Progress, Settings, LevelRecord; load / save / merge
   shell/
-    app.py        App: event loop, three screens, all the wiring
-    draw.py       palette, rocket parts, alien, starfield, buttons, the transform
-    audio.py      five synthesized clips, no asset files
+    app.py        App: event loop, Mode, three screens, all the wiring
+    draw.py       palette, rocket, alien, court, cabinets, buttons, the transform
+    audio.py      eight synthesized clips, no asset files
 tests/
-  test_facts.py   pool contents, key stability
-  test_round.py   parts, re-queue, launch
-  test_clock.py   the time bank
+  test_facts.py   pool contents, key stability, both orientations
+  test_round.py   parts, re-queue, both win conditions
+  test_clock.py   the time bank and the rally deadline
   test_storage.py round-trip, corruption, merge, backward compatibility
-  test_scaling.py the design-surface transform, alien scale
+  test_scaling.py the design-surface transform, threat closeness, court geometry
 ```
 
-`domain/facts.py` builds every level from one rule: each number-bond pair yields
-four questions (`a+b=?`, `a+?=c`, `c−a=?`, `c−?=b`). Pools are enumerated, not
-generated — 24 / 44 / 144 facts, pinned by `test_pool_sizes`.
+`domain/facts.py` builds each addition level from one rule: each number-bond
+pair yields four questions (`a+b=?`, `a+?=c`, `c−a=?`, `c−?=b`). A times pair
+yields two (`a×b=?`, `a×?=c`) — the other two would be division, which is not
+built. Pools are enumerated, not generated — 24 / 44 / 144 / 22 / 22 / 22, and
+`everything` is their concatenation (278), pinned by `test_pool_sizes`.
+
+A `Question` is a `Fact` plus `flipped`, which puts the `=` on either side. It
+delegates `.answer` and `.key`, so orientation never reaches storage.
 
 ## Tuning
 
@@ -68,16 +78,33 @@ These are the dials, and they are meant to be turned after watching him play.
 
 | Constant | Where | Now | Effect |
 |---|---|---|---|
-| `PARTS_TO_LAUNCH` | `domain/round.py` | 10 | length of a round |
+| `PARTS_TO_LAUNCH` | `domain/round.py` | 10 | length of a rocket round |
 | `RETRY_GAP` | `domain/round.py` | 3 | how long before a missed fact returns |
-| `GRACE_PARTS` | `domain/round.py` | 5 | opening head start, in problems |
+| `GRACE_PARTS` | `domain/round.py` | 5 | rocket head start, in problems |
 | `BANK_PARTS` | `domain/round.py` | 4 | ceiling on banked time, in problems |
-| `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 | pace, per level |
+| `BALL_FLIGHT` | `domain/round.py` | 1.5 | one ball's flight, in problems |
+| `RETURN_FLIGHT` | `shell/app.py` | 0.34s | how long his return takes to land |
+| `TENNIS.lives` | `domain/round.py` | 3 | balls past him before the match is lost |
+| `TENNIS.target` | `domain/round.py` | 10 | returns needed to win |
+| `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 / 5 | pace, per level |
 
-`seconds_per_part` is the only per-level number; start and cap derive from it, so
-retuning a level is one edit and nothing needs changing twice. `test_clock.py`
-asserts the derivation rather than the literals, so changing a level's pace does
-not break the suite — changing `GRACE_PARTS` or `BANK_PARTS` intentionally will.
+`seconds_per_part` is the only per-level number; start and cap derive from it
+*and from the mode's `Rules`*, so retuning a level is one edit and nothing needs
+changing twice. `test_clock.py` asserts the derivation rather than the literals
+under both rule sets, so changing a level's pace does not break the suite —
+changing `GRACE_PARTS`, `BANK_PARTS` or `BALL_FLIGHT` intentionally will.
+
+Tennis is harder than the rocket at the same level: no grace bank, no banking
+ahead. Raise `BALL_FLIGHT` before touching `seconds_per_part`, which would
+change the rocket too.
+
+**The clock waits for the ball.** A correct answer resets the rally in the
+domain immediately, but `Play.volley` holds the outgoing shot for
+`RETURN_FLIGHT` and `App.update` skips `tick` while it flies — otherwise the
+next ball is already falling before this one has been hit, and the rally reads
+as a countdown rather than a rally. `App.ball` is the single source of truth for
+where the ball is; seed a new volley from it, never from the clock, or a shot
+struck mid-flight jumps.
 
 ## Invariants that break silently
 
@@ -106,7 +133,24 @@ Skipping it there would give a mastery record blind to the mode he uses when
 struggling.
 
 **Untimed launches must not touch `launches`.** They go to `practice`, or the
-number that means "I beat it" is farmable from the menu toggle.
+number that means "I beat it" is farmable from the menu toggle. Tennis is always
+timed for the same reason it has no untimed form, and `new_round` raises rather
+than building a round with lives and no clock.
+
+**`Sounds.play` fails silently on an unknown name.** It is
+`self._clips.get(name)` — a missing clip plays nothing and raises nothing. That
+is why `Mode.clips` maps outcomes to clip names explicitly instead of using
+`outcome.value`: keyed by the enum, renaming an outcome turns a sound off with
+no error anywhere.
+
+**Dimmed buttons must not hover.** `draw_card` takes `dimmed` and ignores
+`hovered` when set, and the click handlers never see `SOON_BUTTONS`. A
+coming-soon row that lights up under the cursor and does nothing reads as
+broken, not as unfinished.
+
+**A wrong answer in tennis must not touch the queue.** Not advance it, not
+re-queue the fact — the question is still on screen, so re-queuing would put it
+in the deck twice. The re-queue lives on the timeout path in `tick` instead.
 
 **Floor `parts` at zero in the reducer, not the renderer.** Negative parts index
 the part list from the end and draw a nose cone floating alone.
@@ -125,16 +169,18 @@ reads the rate back rather than hardcoding it.
 
 ## Making the two likely changes
 
-**A new level.** Add a `Level` to `LEVELS` in `domain/facts.py` with its pair
-list and `seconds_per_part`; `_pool` does the rest. `LEVEL_BUTTONS` in `app.py`
-is generated from `LEVELS`, so the level-select screen picks it up — but check
-it still fits: three buttons at `240 + index * 130` reach y=604 of 800. Update
-`test_pool_sizes`.
+**A new level.** Add a `Level` to `_ADDITION` or `_MULTIPLY` in
+`domain/facts.py` with its pair list and `seconds_per_part`; `_pool` does the
+rest, and `everything` picks it up because it is derived. Then place it: the
+level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD` in
+`app.py`), so a fourth row needs a layout decision, not just an id in a tuple.
+Update `test_pool_sizes` — the `everything` total moves too.
 
-**A second game mode.** It consumes the stream of `Outcome`s and renders progress
-its own way; `domain/` needs no changes at all, which is the entire reason
-`round.py` counts parts instead of naming them. The menu currently hardcodes one
-mode button.
+**A third game mode.** Add a `Rules` to `domain/round.py` and a `Mode` to
+`MODES` in `app.py` (title, clip map, nouns, hold times), a cabinet rect in
+`CABINETS`, and a renderer. Ask first whether its clock is a bank or a deadline:
+if neither `ROCKET` nor `TENNIS` fits, `Rules` gains a dial rather than the
+shell gaining a rule.
 
 ## Testing, and what testing cannot reach
 

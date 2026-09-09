@@ -27,18 +27,69 @@ def test_letterbox_is_centred_on_a_tall_tile():
     assert (ox, oy) == (0, 600)
 
 
-def test_alien_is_distant_while_the_bank_is_full_and_fills_the_sky_at_zero():
-    from mathr.shell.draw import alien_scale
+def test_the_threat_is_distant_while_the_clock_is_full_and_on_him_at_zero():
+    from mathr.shell.draw import closing
 
-    assert alien_scale(20.0, 12.0) == 0.0  # above the cap, during grace
-    assert alien_scale(12.0, 12.0) == 0.0
-    assert alien_scale(6.0, 12.0) == pytest.approx(0.5)
-    assert alien_scale(0.0, 12.0) == 1.0
+    assert closing(20.0, 12.0) == 0.0  # above the cap, during grace
+    assert closing(12.0, 12.0) == 0.0
+    assert closing(6.0, 12.0) == pytest.approx(0.5)
+    assert closing(0.0, 12.0) == 1.0
 
 
-def test_alien_retreats_when_time_is_earned_back():
-    from mathr.shell.draw import alien_scale
+def test_the_threat_retreats_when_time_is_earned_back():
+    from mathr.shell.draw import closing
 
-    closing = alien_scale(4.0, 12.0)
-    after_a_correct_answer = alien_scale(7.0, 12.0)
-    assert after_a_correct_answer < closing
+    approaching = closing(4.0, 12.0)
+    after_a_correct_answer = closing(7.0, 12.0)
+    assert after_a_correct_answer < approaching
+
+
+def test_the_ball_lands_on_his_baseline_and_starts_on_the_opponents():
+    from mathr.shell.draw import COURT_BOTTOM, COURT_TOP, court_lane, court_point
+
+    assert court_point(0.0, 0.0)[1] == COURT_TOP
+    assert court_point(0.0, 1.0)[1] == COURT_BOTTOM
+    assert all(-1.0 <= court_lane(asked) <= 1.0 for asked in range(20))
+
+
+def test_the_court_is_wider_near_him_than_at_the_far_baseline():
+    from mathr.shell.draw import court_point
+
+    far = court_point(1.0, 0.0)[0] - court_point(-1.0, 0.0)[0]
+    near = court_point(1.0, 1.0)[0] - court_point(-1.0, 1.0)[0]
+    assert near > far
+
+
+def test_the_court_stays_clear_of_the_keypad():
+    from mathr.shell.app import KEYPAD
+    from mathr.shell.draw import court_point
+
+    assert max(court_point(1.0, travel)[0] for travel in (0.0, 0.5, 1.0)) < min(
+        button.rect.left for button in KEYPAD
+    )
+
+
+def test_a_return_ends_at_the_opponents_baseline():
+    from mathr.shell.draw import return_flight
+
+    assert return_flight(0.8, 1.0, 0.0) == (0.8, 1.0)
+    assert return_flight(0.8, 1.0, 1.0) == (0.0, 0.0)
+
+
+def test_a_missed_ball_carries_on_past_his_baseline():
+    from mathr.shell.draw import past_flight
+
+    lane, travel = past_flight(-0.4, 1.0, 1.0)
+    assert lane == -0.4 and travel > 1.0
+
+
+def test_the_player_stays_put_through_his_follow_through():
+    from mathr.shell.app import Volley
+
+    volley = Volley("return", 0.8, 1.0, 0.8, 0.34)
+    volley.elapsed = 0.17
+    assert volley.player_lane == 0.8
+    assert volley.position[1] < 1.0 and not volley.done
+    assert 0.0 < volley.swing < 1.0
+    volley.elapsed = 0.34
+    assert volley.done and volley.position == (0.0, 0.0) and volley.swing == 0.0

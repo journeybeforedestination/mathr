@@ -1,11 +1,15 @@
 # mathr — plan
 
-A desktop math game for one specific second grader. Menu picks a **game mode**;
-the only mode now is **Rocket Builder**. Inside it he picks a **level**
-(bonds of five → bonds of ten → bridging ten). Each correct math fact bolts
-another part onto a rocket drawn on screen; each miss knocks the top part off
-and re-queues that fact to be asked again. Ten parts on and it counts down and
-launches. Progress and per-fact attempt counts persist to a local JSON file.
+A desktop math game for one specific second grader. An **arcade** picks a game
+mode — **Rocket Builder** or **Tennis Match** — and inside either he picks a
+**level** from a grid of addition, multiplication and mixed pools. Each correct
+math fact bolts another part onto a rocket drawn on screen; each miss knocks the
+top part off and re-queues that fact to be asked again. Ten parts on and it
+counts down and launches. Progress and per-fact attempt counts persist to a
+local JSON file.
+
+*(v1 shipped with Rocket Builder alone; the arcade and tennis are the section
+at the end of this file.)*
 
 Nothing exists yet — `/home/jmc/Projects/mathr` is an empty, non-git directory.
 This is a greenfield build, so there is no existing code to falsify.
@@ -375,6 +379,404 @@ and nothing else in the file would tell you the dial is wrong.
 **The Timer toggle may be the whole experiment.** If he turns it off every
 time, the feature is wrong rather than the constants.
 
+## The arcade: a second mode, multiplication, and the flipped equation
+
+Written after the v1 sections above, in the same spirit: the reasoning, not just
+the outcome. **Built** — all four steps; what follows is why, not a proposal.
+
+### What changes
+
+The menu becomes an **arcade**: two drawn cabinets, Rocket Builder and Tennis
+Match, either of which leads to a shared level screen of four columns —
+Addition, Multiply, Division (dimmed), Everything. **Tennis Match** is the second
+mode the architecture was built for: an opponent serves, the ball falls down a
+perspective court toward the player, and solving the problem before it arrives
+swats it back. Wrong answers cost nothing and can be retyped while the ball is
+still in flight; a ball that gets past him scores for the opponent, three points
+loses the match, ten returns wins a trophy. Three **multiplication** levels
+(×2, ×5, ×10) join the three addition ones, plus a derived **Everything** pool.
+And every equation now renders with the `=` on a randomly chosen side, so
+`? = 3 + 2` is asked as often as `3 + 2 = ?`.
+
+`storage.py` does not change at all.
+
+---
+
+### The load-bearing decision: tennis differs in *rules*, not in rendering
+
+The v1 plan bets that a mode is only a renderer — *"a mode consumes a stream of
+correct/wrong outcomes and renders progress however it likes"* (**The seam that
+matters**, above). That bet does not survive tennis. Rocket Builder's clock is a
+**shared bank** of seconds; tennis is a **per-rally deadline**. Five rules differ,
+so `Round` gains a frozen `Rules` bundle with `ROCKET` and `TENNIS` constants,
+and `tick` and `apply` read policy from it.
+
+Here is what building tennis as a pure renderer over the existing rules actually
+produces. Take `tens` (`seconds_per_part = 3.0`, `domain/facts.py:78`), so
+`new_round` opens `seconds_left = GRACE_PARTS * 3.0 = 15.0` with `cap = 12.0`
+(`domain/round.py:93`, `:73`), and draw the ball's position from
+`seconds_left / cap` the way `draw.alien_scale` does (`shell/draw.py:238`):
+
+1. **The serve does not move for three seconds.** `15.0 / 12.0` is above 1.0, so
+   the ball sits pinned at the opponent's baseline until the bank falls under the
+   cap. `alien_scale` clamps this deliberately — a saucer that starts off-screen
+   is fine, a ball that hangs motionless is not.
+2. **A correct answer does not reset the rally.** He answers at t=4.0 with 11.0
+   left; `_credit` (`domain/round.py:123`) returns
+   `max(11.0, min(11.0 + 3.0, 12.0)) = 12.0`. The ball retreats by one twelfth of
+   the court and keeps coming. It never flies back to the opponent, so there is
+   no rally — just a ball creeping inexorably closer.
+3. **A wrong answer removes a return he already hit.** `apply` does
+   `max(round.parts - 1, 0)` (`domain/round.py:148`). His score counter drops
+   while the ball is still in the air. Nothing in tennis does that.
+4. **The first ball he misses ends the match.** The bank empties, `tick` sets
+   `failed=True` (`domain/round.py:119`), and there is no such thing as an
+   opponent point. The three-point cushion cannot exist.
+
+The symptom is what makes this load-bearing: **nothing fails**. It compiles, it
+draws, every existing test passes, and it plays as a different game than the one
+specified. There is no error message that says "your clock model is wrong".
+
+```python
+@dataclass(frozen=True)
+class Rules:
+    opening_parts: float      # bank at serve, in problems      5   | 1
+    credit: str               # "cap" | "reset"                cap  | reset
+    wrong_costs_part: bool    # parts - 1 on a wrong answer    True | False
+    wrong_advances: bool      # move to the next question      True | False
+    empty: str                # what a zero clock does         fail | point
+    lives: int | None         # opponent points before a loss  None | 3
+    target: int               # parts/returns to win            10  | 10
+
+ROCKET = Rules(GRACE_PARTS, "cap",   True,  True,  "fail",  None, 10)
+TENNIS = Rules(BALL_FLIGHT, "reset", False, False, "point", 3,    10)
+```
+
+`Round` carries `rules: Rules` and `points: int`. `PARTS_TO_LAUNCH` becomes
+`rules.target`; `GRACE_PARTS` stays as `ROCKET.opening_parts`.
+
+---
+
+### The steps
+
+Four, in this order for two concrete reasons: `Question` first because it is the
+only change that touches every pool test, and doing it after `Rules` would mean
+rewriting the reducer's deck handling twice; and the level screen must land in
+the *same* step as the multiplication levels, because `LEVEL_BUTTONS`
+(`shell/app.py:31`) lays levels out at `240 + index * 130` and seven levels reach
+y=1020 of an 800-tall design surface. There is no order in which the current
+screen survives a fourth level.
+
+#### 1. `Question`: the `=` lands on either side
+
+`domain/facts.py`, `domain/round.py`, `tests/test_facts.py`.
+
+A frozen `Question(fact: Fact, flipped: bool)` renders `Fact.prompt`'s two
+orientations and delegates `.answer` and `.key` to its fact. `Round.deck` and
+`Round.queue` become `tuple[Question, ...]`; `new_round` draws each orientation
+from the injected `rng` alongside the existing `rng.sample`, so rounds stay
+deterministic per seed.
+
+`Fact.key` (`domain/facts.py:26`) does **not** change, so pool sizes, the file
+format and every recorded count are untouched — see the traps.
+
+*Gate:* `uv run pytest`. `test_answer_is_the_blank_slot` moves to `Question` and
+must assert `prompt.count("?") == 1` in **both** orientations — that is the
+assertion that catches a flip that drops or duplicates the blank.
+`test_shuffle_is_deterministic_per_seed` must still pass, which is what proves
+the orientations came from the injected rng and not module-level `random`.
+
+*Falsifies:* `README.md` lines 24-26, which show only `8 + ? = 10`-shaped
+prompts. Add a flipped example in the same step.
+
+#### 2. `Rules`, `lives`, and honest `Outcome` names
+
+`domain/round.py`, `tests/test_round.py`, `tests/test_clock.py`,
+`shell/app.py` (wiring only).
+
+Add `Rules` as above. Rename `Outcome.LAUNCHED` → `WON` and `ABDUCTED` → `LOST`,
+and add `POINT` for a ball getting past him. `Round.launched` / `failed` keep
+their names: `storage._fold` (`storage.py:124`) reads them, and renaming them
+would touch the file format for no gain.
+
+Rocket behaviour must be **bit-identical** after this step. `TENNIS` exists and
+is unused.
+
+*Gate:* `uv run pytest`, with `test_clock.py`'s bank tests now parameterized over
+both rule sets. The rocket half must still assert the *derivation*
+(`GRACE_PARTS * seconds_per_part`, `BANK_PARTS * seconds_per_part`) rather than
+literals, exactly as `test_start_and_cap_scale_with_the_level`
+(`tests/test_clock.py:37`) does now — otherwise retuning a level breaks the suite,
+which the v1 plan went out of its way to avoid.
+
+*Falsifies:* the `Outcome` names in **The seam that matters** above, and
+`CLAUDE.md`'s claim that `round.py` "knows `parts: int` and a bank of seconds" —
+it now knows a rules bundle. Update both.
+
+#### 3. The arcade, the four-column level screen, and multiplication
+
+`shell/draw.py`, `shell/app.py`, `domain/facts.py`, `tests/test_facts.py`.
+
+Domain: `_times_pair(a, b)` yields the two multiplication forms — `a × b = ?`
+and `a × ? = c`. It is a sibling of `_from_pair` (`domain/facts.py:43`), not a
+parameterization of it: `_from_pair` yields four questions including the two
+subtraction forms, and the multiplication equivalents of those are division,
+which is deliberately not built. Three levels — `twos`, `fives_times`, `tens_times`
+— each 11 pairs (`n × 0` through `n × 10`), 22 facts apiece, all at
+`seconds_per_part = 5.0`. Then `everything`, whose `facts` is the concatenation
+of every other level's pool: **278 facts** (24 + 44 + 144 + 66, verified against
+the running pools).
+
+Note the id collision: the existing addition level is already `fives`
+(`domain/facts.py:77`). The multiplication level must not reuse that id — it
+keys `LevelRecord` in `progress.json`.
+
+Shell: `render_menu` (`shell/app.py:316`) becomes the arcade — two drawn cabinets
+with marquees and small live screens (the rocket reusing `draw_rocket`, tennis a
+bouncing ball), with Sound / Timer / Quit as a small row along the bottom.
+`render_levels` (`:327`) becomes four columns at roughly 270px wide; `_badge`
+(`:412`) keeps its text but re-anchors **under** the level name rather than at
+`button.rect.right - 140`, which no longer fits. Division shows three dimmed rows,
+Everything shows one tall live button above a dimmed **Tricky Facts** button.
+`self.screen` gains no new value — it stays `menu` / `levels` / `play`, with the
+chosen mode carried on `App`.
+
+**The keypad keeps its exact coordinates** (`shell/app.py:41`). Its hitboxes are
+the one piece of UI verified by hand at several window sizes.
+
+*Gate:* `uv run pytest` — `test_pool_sizes` becomes
+`{fives: 24, tens: 44, bridge: 144, twos: 22, fives_times: 22, tens_times: 22,
+everything: 278}`; `test_both_blank_forms_in_every_pool`
+(`tests/test_facts.py:27`) asserts `ops == {"+", "-"}` for *every* level and must
+become per-topic; `test_every_fact_is_true` (`:4`) only knows `+` and `-` and
+needs a `×` arm. Then, by hand: `uv run mathr`, and check that both cabinets are
+clickable, that the dimmed columns do nothing on click **and do not highlight on
+hover**, and that the keypad still registers accurately in a tall narrow tile.
+
+*Falsifies:* `plan.md` lines 3-4 ("the only mode now is **Rocket Builder**"),
+`README.md`'s "Playing" section and level table, and `CLAUDE.md`'s **The map**
+and **Making the two likely changes** (the level-button arithmetic it quotes is
+now wrong). Fix all four here.
+
+#### 4. Tennis
+
+`shell/draw.py`, `shell/app.py`, `shell/audio.py`.
+
+The court renders left of x=680: opponent small and far at the top, player near
+and large at the bottom-left, the ball growing as it drops. Opponent points draw
+as three markers, returns as a row like `draw_progress` (`shell/draw.py:212`).
+Ball position is a pure function of `seconds_left / (seconds_per_part *
+BALL_FLIGHT)` — the same shape as `alien_scale`, and for the same reason: it
+retreats when he earns time back instead of only ever advancing.
+
+`BALL_FLIGHT = 2.0` goes in `domain/round.py` beside the other dials, because
+pacing is a rule.
+
+Audio: three new clips built with the existing `_Shape` pattern — a percussive
+`pock` for a return, a descending `drop` for a lost point, a bright `cheer` for
+the trophy. The existing `wrong` buzz and `warn` are reused.
+`self.sounds.play(outcome.value)` (`shell/app.py:254`) is replaced by a per-mode
+outcome→clip mapping — see the traps.
+
+*Gate:* `uv run pytest` for the domain half. Then by hand: `uv run mathr`, play a
+tennis match on `tens`, and check that the ball resets on a hit, that a wrong
+answer leaves the problem on screen with the ball still falling, that three
+missed balls ends the match, and that all three new clips are actually audible —
+clip *construction* is proven in tests, output through PipeWire is not.
+
+*Falsifies:* `ideas.md`'s **A second game mode** entry, which becomes *built*,
+following the pattern already set there by **Timed / speed modes**. Its
+**Multiplication via skip counting** line under *More levels* is also now built.
+Add the reserved spot for **A "tricky facts" practice mode** in the same edit.
+
+---
+
+### Traps
+
+**`Fact.key` must not learn about orientation.** It is the storage format:
+`"3+2=5@b"` keys counts in a file that outlives the code. Putting `flipped` in
+the key orphans every count already recorded and needs a `version` bump plus a
+migration. Orientation lives on `Question`, which is never serialized. The
+symptom of getting this wrong is not a crash — it is a child's mastery record
+silently resetting to zero.
+
+**The reset credit must still never push the bank down.** The v1 trap holds in
+the new rule: tennis credit is `max(left, flight)`, not `flight`. A hit that
+arrives while the previous ball still had time on it must not *shorten* the next
+rally as a reward for being fast.
+
+**A wrong answer in tennis must not touch the queue at all.** Not advance it, and
+not re-queue the fact. `apply` currently inserts the missed fact at `RETRY_GAP`
+(`domain/round.py:144`); doing that while also leaving the question on screen puts
+the same fact in the deck twice. The re-queue moves to the **timeout** path
+instead — when a ball gets past him, the fact comes back three questions later
+exactly as a missed rocket fact does.
+
+**`Sounds.play` fails silently on an unknown name.** It is
+`clip = self._clips.get(name)` (`shell/audio.py:128`) — a missing clip plays
+nothing and raises nothing. `self.sounds.play(outcome.value)` (`shell/app.py:254`)
+couples clip names to enum values, so renaming `LAUNCHED` → `WON` in step 2 turns
+the launch sound off with no error anywhere. Replace that call with an explicit
+per-mode map in the same step as the rename, not later.
+
+**New clips must match `mixer.get_init()` exactly — 16-bit signed mono.**
+`_tone` returns `None` on a mismatch (`shell/audio.py:30-31`) and `_tone` reads
+the rate back rather than hardcoding it. From `CLAUDE.md`, verbatim: *"A mismatch
+does not raise; it plays as static or at the wrong pitch."* Build the three new
+clips through `_tone` and the `_Shape` pattern; do not hand-roll a buffer.
+
+**Dimmed buttons must not hover.** `draw_button` (`shell/draw.py:198`) brightens
+the fill and switches the border to `ACCENT` whenever `hovered` is true. A Division
+row that lights up under the cursor and then does nothing on click reads as broken,
+not as coming-soon. The dimmed path needs its own branch, and the click handlers
+must skip those rects entirely.
+
+**Tennis must never run untimed.** The Timer toggle applies to Rocket only. If
+`TENNIS` were ever constructed with `seconds_left=None`, the `POINT` path has no
+clock to reset and the ball has nowhere to be. Assert it where the round is built.
+
+**Floor `parts` at zero in the reducer, not the renderer.** Unchanged from v1, and
+newly relevant: tennis's `wrong_costs_part=False` means the floor is untested by
+the tennis path, so the rocket tests are the only thing holding it.
+
+**The `everything` pool must be derived, not hand-listed.** Concatenate the other
+levels' `facts` at module level. A hand-copied list silently drifts the moment a
+level is retuned, and `test_pool_sizes` would keep passing on a stale number.
+
+**The court must not do its own scaling.** Everything is laid out in 1280×800 and
+`draw.to_design` converts mouse positions once, at the event boundary. From
+`CLAUDE.md`, verbatim: *"clicks are accurate near the top-left and drift further
+out, which reads as 'sloppy hitboxes' and never as a scaling bug."*
+
+---
+
+### Considered and rejected
+
+- **Tennis as a pure renderer over the existing bank clock.** My own first
+  recommendation during the dig, and the one a fresh context is most likely to
+  reach for, because it costs zero domain change. Walked through with real
+  numbers above; it produces a ball that hangs motionless for three seconds, never
+  resets, and ends the match on the first miss. Changed my mind before proposing
+  it.
+- **Two reducers over a shared `domain/deck.py`.** Rocket and tennis rules each
+  stated with no flags at all. Rejected in favour of `Rules`: ~30 lines of
+  near-duplicate reducer, two `Round`-ish types, and `storage.merge` would have to
+  accept either.
+- **Tennis rules in the shell**, wrapping `Round` with lives and reset. Violates
+  the one-direction layering; `shell/` holds no rules.
+- **Sudden-death tennis**, and **a wrong answer scoring a point immediately.**
+  Both harsher than the rocket, which warns as the bank drains and lets him climb
+  back out. With the keypad capped at two digits a mistype is cheap and common.
+- **A wrong answer costing a return**, rocket-style. "My score went down" is not
+  a thing that happens in tennis.
+- **Ball flight = `seconds_per_part` exactly** (no `BALL_FLIGHT`). Honest to what
+  the constant means, but strictly harder than any rocket round, since the rocket
+  softens the same pace with a five-problem grace bank.
+- **A ball that speeds up as the rally grows.** More arcade, but it makes "why did
+  I lose" opaque to a seven-year-old, and it is a formula where a dial suffices.
+- **Orientation as part of `Fact`.** Pools double, mastery tracks each orientation
+  separately, and `Fact.key` changes shape — `VERSION 2` plus a migration of every
+  recorded count. Not worth it: `3 + 2 = ?` and `? = 3 + 2` are the same retrieval.
+- **One orientation per whole round.** Calmer, but he settles into the shape after
+  two questions, which is most of what the flip was for.
+- **Per-mode storage**, either as `"rocket:tens"` keys (changes an existing key's
+  shape → version bump + migration) or as extra per-mode fields (additive and
+  cheap, but `best_seconds` has to fork or become meaningless). One record per
+  level; the per-fact tallies were always mode-agnostic.
+- **A separate topic screen** (arcade → topic → level), and **topic tabs** on the
+  level screen. Both add a click or a piece of screen state to save a layout
+  problem that four columns solve outright.
+- **A full-width court with the keypad moved to the bottom.** Best-looking court,
+  but it relocates the only UI whose hitboxes were verified by hand across window
+  sizes.
+- **Three graded mixes in the Everything column** (Add Mix / Times Mix /
+  Everything). Two of the three overlap almost entirely with the columns beside
+  them.
+- **Building tricky-facts now.** It needs a rule for what "tricky" means and has
+  nothing to draw from on a fresh `progress.json`. It gets a dimmed spot instead.
+- **Stars instead of text badges**, which would drop `best_seconds` from the
+  screen, and **Division as one tall panel**, which hides how many levels are
+  coming.
+- **Division as empty `Level`s in `LEVELS`.** Every domain test that iterates
+  levels would have to special-case a pool with no facts. The dimmed rows are
+  shell-only.
+- **Settings behind a gear icon.** Buries the Timer toggle, which exists precisely
+  for the day the clock is too much and someone needs to find it fast.
+
+---
+
+### Accepted with known risk
+
+**Wrong answers are free in tennis, so the answers are brute-forceable.** With
+`tens` and a 6-second ball, a bright kid can type 8, 9, 10, 11 and let the pock
+tell him when he is right — recognition instead of recall, which is the exact
+failure that ruled out multiple-choice in v1. Accepted because the alternative
+punishes mistypes. *Revisit if* his `wrong` counts in `progress.json` climb
+sharply on tennis levels while `right` stays flat: at that point a wrong answer
+should cost a point.
+
+**Tennis at `BALL_FLIGHT = 2.0` is still harder than the rocket at the same
+level.** There is no grace bank and no way to bank ahead. *Revisit if* he loses
+0-3 repeatedly on `tens` — raise `BALL_FLIGHT` before touching `seconds_per_part`,
+which would change the rocket too.
+
+> **Revised after watching it played.** `BALL_FLIGHT` is now **1.5**, and the
+> reason was not difficulty. At 2.0 the ball crept, and — worse — a correct
+> answer reset the rally in the same frame, so the ball vanished from in front
+> of him and reappeared at the far baseline. It never looked *hit*, which is the
+> one thing the mode exists to make it look like. The fix is a shell-side
+> `Volley`: his return flies back over the net for `RETURN_FLIGHT` (0.34s) with
+> the clock paused, the same gate focus-loss already used. The pause is not
+> charity — it is the follow-through, and it is why the faster ball is still
+> fair. A ball that gets past him now carries on out of the court for 0.5s
+> instead of teleporting too. Both flights are pure functions in `draw.py`; the
+> domain did not change beyond the constant.
+
+**The `everything` pool is weighted by pool size**, so `bridge` alone is 144 of
+278 facts — 52% of what he sees. *Revisit if* it plays as "just Over the Ten
+again": sample a level first, then a fact within it.
+
+**`seconds_per_part = 5.0` for all three multiplication levels is a guess**,
+matching `bridge` on the grounds that it is new material. Same instrument as
+before: `failures` per level in `progress.json`.
+
+**Ten returns and three points are guesses**, exactly like `PARTS_TO_LAUNCH`.
+
+**One record per level means "3 wins" does not say which mode won them.**
+*Revisit if* he asks how many tennis matches he has won — per-mode counters can be
+added beside the existing fields and read through `.get`, with no version bump.
+
+---
+
+### Environment and coverage notes
+
+Verified by running, not remembered: **pygame-ce 2.5.8, SDL 2.32.10, Python
+3.14.7**; the three current pools really are 24 / 44 / 144. `pytest` and `ruff`
+are not installed system-wide — `uv run pytest`. The v1 constraints all still
+hold: Hyprland tiles the window, `pygame.display.get_num_video_drivers()` does not
+exist in this pygame-ce, and **the user creates commits, branches and anything on
+GitHub**.
+
+**Where my reading was partial**, so it is not inherited as coverage: I read
+`domain/round.py`, `domain/facts.py`, `storage.py`, `shell/app.py`,
+`shell/draw.py`, `shell/audio.py`, `tests/test_round.py`, `tests/test_clock.py`,
+`tests/test_facts.py` and `tests/test_scaling.py` in full. I read only the helper
+and assertion lines of `tests/test_storage.py`, the first 50 lines of
+`README.md`, and `plan.md` in sections rather than end to end.
+
+**Verify before relying on it:** that no call site passes an unknown name to
+`Sounds.play` today (grep before the rename, so the new map is exhaustive); and
+that `draw_button`'s hover branch is the only place a button's appearance changes,
+before adding the dimmed path.
+
+---
+
+### Out of scope, and where it went
+
+Recorded in `ideas.md`, not built here: **Division's content**, **the rule for
+what "tricky" means** in the tricky-facts mode (both reserved as dimmed buttons on
+the level screen), the parent-facing view of weak facts, two-digit addition with
+regrouping, adaptive difficulty, and packaging beyond `uv run mathr`.
 ---
 
 ## Traps

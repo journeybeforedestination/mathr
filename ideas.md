@@ -12,6 +12,9 @@ would be genuinely useful — deferred only because it is a second UI to design
 and a menu entry a kid will poke at.
 
 ## A "tricky facts" practice mode
+**Reserved** — a dimmed button in the Everything column of the level screen, so
+the spot is visible and the rule is not invented yet.
+
 Draw the question pool from the lowest-scoring facts in `progress.json` instead of
 a level. The stored per-fact counts exist precisely so this is possible later —
 and each one now carries `answered` and `seconds` too, so "tricky" can mean slow
@@ -22,14 +25,31 @@ the one a right/wrong count cannot see.
 - Two-digit addition/subtraction without regrouping (34+25, 68−43).
 - Two-digit **with** regrouping (37+28, 62−45) — the genuinely hard one. Typed
   answers plus mental carrying may need scratch paper; watch him before building.
-- Multiplication via skip counting by fives and tens.
+- Multiplication via skip counting by fives and tens. **Built** — `twos`,
+  `fives_times` and `tens_times`, plus an `everything` pool derived from every
+  other level's facts.
+- **Division.** Reserved as a dimmed column on the level screen. The
+  multiplication pools deliberately stop at `a × b = ?` and `a × ? = c`; the
+  missing two forms *are* division, so this is a content decision (how far the
+  tables go, whether remainders exist) and not a code one.
 
 ## A second game mode
-The whole reason `domain/round.py` knows about `parts: int` and not about
-rockets. Candidates: a growing city, a rescue climb, a race. Any mode that
-consumes a stream of correct/wrong outcomes reuses all three levels unchanged —
-and now the clock too, since `tick` counts seconds rather than anything about a
-rocket. A mode with no threat can simply run untimed.
+**Built** — Tennis Match. Worth keeping the original entry's claim next to what
+actually happened, because the claim was wrong in the interesting way.
+
+It said any mode that consumes a stream of correct/wrong outcomes reuses the
+levels unchanged, so a mode is only a renderer. Tennis is not: its clock is a
+per-rally deadline rather than a shared bank, a wrong answer costs it nothing,
+and a missed ball is a point rather than the end. Built as a pure renderer over
+the rocket's rules it would still compile, still draw, and play as a different
+game — see *The load-bearing decision* in `plan.md`. What the seam actually
+bought was `parts: int`: the reducer took a `Rules` bundle and gained a
+`points` counter, and neither pools, storage, nor the coordinate transform moved
+at all.
+
+The remaining candidates — a growing city, a rescue climb, a race — each want
+their own read of that bundle. A mode with no threat can still simply run
+untimed.
 
 ## Adaptive difficulty
 Weight question selection toward facts he misses. Rejected for v1 as complexity

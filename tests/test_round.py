@@ -4,7 +4,15 @@ from dataclasses import replace
 import pytest
 
 from mathr.domain.facts import LEVELS_BY_ID
-from mathr.domain.round import PARTS_TO_LAUNCH, RETRY_GAP, Outcome, Tally, apply, new_round
+from mathr.domain.round import (
+    PARTS_TO_LAUNCH,
+    RETRY_GAP,
+    TENNIS,
+    Outcome,
+    Tally,
+    apply,
+    new_round,
+)
 
 
 @pytest.fixture
@@ -53,7 +61,7 @@ def test_launch_after_ten_correct(round_):
         current, outcome = answer(current)
         assert outcome is Outcome.CORRECT
     current, outcome = answer(current)
-    assert outcome is Outcome.LAUNCHED
+    assert outcome is Outcome.WON
     assert current.launched and current.parts == PARTS_TO_LAUNCH
 
 
@@ -62,7 +70,7 @@ def test_answers_after_launch_are_rejected(round_):
     for _ in range(PARTS_TO_LAUNCH):
         current, _ = answer(current)
     after, outcome = apply(current, 999)
-    assert after is current and outcome is Outcome.LAUNCHED
+    assert after is current and outcome is Outcome.WON
 
 
 def test_attempts_accumulate_for_right_and_wrong(round_):
@@ -86,3 +94,21 @@ def test_shuffle_is_deterministic_per_seed():
     a = new_round(LEVELS_BY_ID["tens"], random.Random(7))
     b = new_round(LEVELS_BY_ID["tens"], random.Random(7))
     assert a.deck == b.deck
+
+
+def test_ten_returns_win_the_match():
+    current = new_round(LEVELS_BY_ID["tens"], random.Random(0), rules=TENNIS)
+    for _ in range(TENNIS.target - 1):
+        current, outcome = answer(current)
+        assert outcome is Outcome.CORRECT
+    current, outcome = answer(current)
+    assert outcome is Outcome.WON and current.parts == TENNIS.target
+
+
+def test_a_wrong_answer_costs_no_return_and_no_retry_slot():
+    current = new_round(LEVELS_BY_ID["tens"], random.Random(0), rules=TENNIS)
+    current, _ = answer(current)
+    after, _ = answer(current, correct=False)
+    assert after.parts == 1
+    assert after.queue == current.queue
+    assert after.attempts[current.current.key].wrong == 1

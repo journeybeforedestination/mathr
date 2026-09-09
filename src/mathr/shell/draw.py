@@ -25,6 +25,10 @@ ALIEN_DARK = (86, 52, 138)
 BEAM = (168, 240, 190)
 HULL_DARK = (168, 176, 204)
 FLAME = (255, 140, 60)
+COURT = (38, 72, 92)
+COURT_LINE = (198, 216, 228)
+BALL = (222, 240, 96)
+CABINET = (44, 40, 86)
 
 ROCKET_BOX = (360, 580)
 ROCKET_ORIGIN = (110, 130)
@@ -195,11 +199,25 @@ class Button:
     tone: tuple[int, int, int] = PANEL
 
 
-def draw_button(surface, font, button: Button, hovered: bool) -> None:
-    fill = tuple(min(255, c + 26) for c in button.tone) if hovered else button.tone
-    pygame.draw.rect(surface, fill, button.rect, border_radius=16)
-    pygame.draw.rect(surface, DIM if not hovered else ACCENT, button.rect, width=3, border_radius=16)
-    text(surface, font, button.label, button.rect.center, INK)
+def draw_card(surface, rect: pygame.Rect, tone=PANEL, hovered: bool = False, dimmed: bool = False) -> None:
+    """The box a button lives in.
+
+    A dimmed card ignores `hovered` entirely: a coming-soon row that lights up
+    under the cursor and then does nothing on click reads as broken rather than
+    as unfinished.
+    """
+    if dimmed:
+        pygame.draw.rect(surface, SPACE, rect, border_radius=16)
+        pygame.draw.rect(surface, PANEL, rect, width=3, border_radius=16)
+        return
+    fill = tuple(min(255, c + 26) for c in tone) if hovered else tone
+    pygame.draw.rect(surface, fill, rect, border_radius=16)
+    pygame.draw.rect(surface, ACCENT if hovered else DIM, rect, width=3, border_radius=16)
+
+
+def draw_button(surface, font, button: Button, hovered: bool, dimmed: bool = False) -> None:
+    draw_card(surface, button.rect, button.tone, hovered, dimmed)
+    text(surface, font, button.label, button.rect.center, DIM if dimmed else INK)
 
 
 def text(surface, font, value, center, colour=INK) -> pygame.Rect:
@@ -209,11 +227,11 @@ def text(surface, font, value, center, colour=INK) -> pygame.Rect:
     return rect
 
 
-def draw_progress(surface, font, done: int, total: int) -> None:
+def draw_progress(surface, font, done: int, total: int, noun: str = "parts") -> None:
     for index in range(total):
         rect = pygame.Rect(700 + index * 46, 96, 34, 14)
         pygame.draw.rect(surface, GOOD if index < done else PANEL, rect, border_radius=7)
-    text(surface, font, f"{done} / {total} parts", (880, 60), DIM)
+    text(surface, font, f"{done} / {total} {noun}", (880, 60), DIM)
 
 
 TIME_BAR = pygame.Rect(700, 124, 10 * 46 - 12, 12)
@@ -235,11 +253,12 @@ ALIEN_MIN = 70
 ALIEN_MAX = 520
 
 
-def alien_scale(seconds_left: float, cap: float) -> float:
-    """0 when the bank is full or better, 1 when it is empty.
+def closing(seconds_left: float, cap: float) -> float:
+    """0 when the clock is full or better, 1 when it is empty.
 
-    A pure function of time *remaining*, which is what makes the saucer
-    retreat when he earns seconds back instead of only ever looming.
+    A pure function of time *remaining*, which is what makes the saucer retreat
+    — and the ball fly back — when he earns seconds back, instead of the threat
+    only ever advancing. Both modes read their one moving thing from this.
     """
     if cap <= 0:
         return 0.0
@@ -312,3 +331,201 @@ def to_design(position: tuple[int, int], window_size: tuple[int, int]) -> tuple[
 def to_window(position: tuple[int, int], window_size: tuple[int, int]) -> tuple[int, int]:
     scale, (ox, oy) = fit(window_size)
     return (int(position[0] * scale + ox), int(position[1] * scale + oy))
+
+
+# --- the tennis court -------------------------------------------------------
+# Laid out in the same 1280x800 design space as everything else, left of the
+# keypad at x=700. Nothing here does its own scaling.
+
+COURT_TOP = 210
+COURT_BOTTOM = 720
+COURT_CENTRE = 350
+COURT_FAR_HALF = 150  # half the court's width at the opponent's baseline
+COURT_NEAR_HALF = 275  # and at his own, which is what makes it look deep
+
+BALL_MIN = 8
+BALL_MAX = 34
+
+
+def court_lane(served: int) -> float:
+    """Which way the ball is served, in [-1, 1], from the number of serves.
+
+    Derived rather than random so the shell stays free of hidden state; the
+    step of 7 across 5 lanes is what keeps consecutive serves apart.
+    """
+    return (((served * 7) % 5) / 2.0 - 1.0) * 0.8  # inset, so the ball stays on court
+
+
+def court_ready(lane: float, travel: float) -> float:
+    """The lane he has moved to, chasing a ball that is `travel` of the way down."""
+    return lane * min(1.0, travel * 1.4)
+
+
+def return_flight(lane: float, travel: float, t: float) -> tuple[float, float]:
+    """His return, back over the net: from where he hit it to the far baseline."""
+    return (lane * (1 - t), travel * (1 - t))
+
+
+def past_flight(lane: float, travel: float, t: float) -> tuple[float, float]:
+    """The one he missed, carrying on past him and out of the court."""
+    return (lane, travel + 0.4 * t)
+
+
+def court_point(lane: float, travel: float) -> tuple[float, float]:
+    """Where a ball on `lane` sits when it is `travel` of the way down."""
+    half = COURT_FAR_HALF + (COURT_NEAR_HALF - COURT_FAR_HALF) * travel
+    return (COURT_CENTRE + lane * half, COURT_TOP + (COURT_BOTTOM - COURT_TOP) * travel)
+
+
+def draw_court(surface) -> None:
+    corners = [
+        court_point(-1.0, 0.0),
+        court_point(1.0, 0.0),
+        court_point(1.0, 1.0),
+        court_point(-1.0, 1.0),
+    ]
+    pygame.draw.polygon(surface, COURT, corners)
+    pygame.draw.polygon(surface, COURT_LINE, corners, width=3)
+    for travel in (0.22, 0.78):
+        pygame.draw.line(surface, COURT_LINE, court_point(-1.0, travel), court_point(1.0, travel), 2)
+    _net(surface)
+
+
+def _net(surface) -> None:
+    """Halfway down, and the one shape that says tennis before any ball moves."""
+    left, right = court_point(-1.08, 0.5), court_point(1.08, 0.5)
+    top = left[1] - 40
+    pygame.draw.line(surface, INK, (left[0], top), (right[0], top), 4)
+    for index in range(17):
+        share = index / 16
+        x = left[0] + (right[0] - left[0]) * share
+        pygame.draw.line(surface, COURT_LINE, (x, top + 3), (x, left[1]), 1)
+    for post in (left, right):
+        pygame.draw.line(surface, HULL_DARK, post, (post[0], top - 6), 5)
+
+
+def _figure(surface, centre: tuple[float, float], height: float, colour, swing: float = 0.0) -> None:
+    x, y = centre
+    body = pygame.Rect(0, 0, int(height * 0.45), int(height * 0.6))
+    body.midbottom = (int(x), int(y))
+    pygame.draw.rect(surface, colour, body, border_radius=int(height * 0.16))
+    pygame.draw.circle(surface, colour, (int(x), int(body.top - height * 0.16)), int(height * 0.18))
+    racket = pygame.Rect(0, 0, int(height * 0.26), int(height * 0.34))
+    # The follow-through: the racket is still up when the ball leaves, and
+    # settles back down as it flies away.
+    racket.center = (
+        int(x + height * (0.4 - 0.14 * swing)),
+        int(body.centery - height * (0.1 + 0.45 * swing)),
+    )
+    pygame.draw.ellipse(surface, HULL, racket)
+    pygame.draw.ellipse(surface, HULL_DARK, racket, width=2)
+
+
+def draw_rally(
+    surface, lane: float, travel: float, player_lane: float, now: float, swing: float = 0.0
+) -> None:
+    """The opponent, the ball wherever it is, and him under where it was.
+
+    `player_lane` is passed rather than derived so that he stays put through
+    his own follow-through instead of chasing his return back up the court.
+    """
+    _figure(surface, court_point(0.0, -0.08), 70, ALIEN)
+
+    x, y = court_point(lane, travel)
+    radius = BALL_MIN + (BALL_MAX - BALL_MIN) * travel
+    shadow = court_point(lane, min(1.0, travel + 0.06))
+    pygame.draw.ellipse(
+        surface,
+        (24, 46, 60),
+        pygame.Rect(0, 0, int(radius * 2.1), int(radius * 0.7)).move(
+            int(shadow[0] - radius * 1.05), int(shadow[1])
+        ),
+    )
+    pygame.draw.circle(surface, BALL, (int(x), int(y)), int(radius))
+    pygame.draw.arc(
+        surface,
+        (150, 170, 60),
+        pygame.Rect(int(x - radius), int(y - radius), int(radius * 2), int(radius * 2)),
+        0.6,
+        2.4,
+        max(2, int(radius * 0.18)),
+    )
+
+    # He slides under the ball as it comes, so the return reads as his doing.
+    ready = court_point(player_lane, 1.0)
+    bob = 3 * math.sin(now * 3)
+    _figure(surface, (ready[0], ready[1] + bob), 130, GOOD, swing)
+
+
+def draw_points(surface, font, points: int, lives: int) -> None:
+    text(surface, font, "them", (74, 128), DIM)
+    for index in range(lives):
+        centre = (150 + index * 40, 128)
+        pygame.draw.circle(surface, BAD if index < points else PANEL, centre, 14)
+
+
+def draw_trophy(surface, centre: tuple[int, int], scale: float = 1.0) -> None:
+    x, y = centre
+    cup = pygame.Rect(0, 0, int(150 * scale), int(120 * scale))
+    cup.midtop = (x, y)
+    pygame.draw.ellipse(surface, ACCENT, cup)
+    pygame.draw.rect(surface, ACCENT, pygame.Rect(cup.centerx - int(14 * scale), cup.bottom - int(10 * scale), int(28 * scale), int(50 * scale)))
+    pygame.draw.rect(
+        surface,
+        ACCENT,
+        pygame.Rect(cup.centerx - int(60 * scale), cup.bottom + int(36 * scale), int(120 * scale), int(24 * scale)),
+        border_radius=int(8 * scale),
+    )
+    for side in (-1, 1):
+        handle = pygame.Rect(0, 0, int(60 * scale), int(70 * scale))
+        handle.center = (cup.centerx + side * int(80 * scale), cup.centery - int(10 * scale))
+        pygame.draw.ellipse(surface, ACCENT, handle, width=max(3, int(12 * scale)))
+
+
+# --- the arcade -------------------------------------------------------------
+
+
+def draw_cabinet(surface, title_font, rect: pygame.Rect, title: str, hovered: bool) -> pygame.Rect:
+    """A cabinet, returning the screen rect for the caller to fill with art."""
+    draw_card(surface, rect, CABINET, hovered)
+    marquee = pygame.Rect(rect.x + 24, rect.y + 20, rect.width - 48, 62)
+    pygame.draw.rect(surface, PANEL, marquee, border_radius=12)
+    text(surface, title_font, title, marquee.center, ACCENT if hovered else INK)
+    screen = pygame.Rect(rect.x + 30, marquee.bottom + 18, rect.width - 60, 236)
+    pygame.draw.rect(surface, SPACE, screen, border_radius=10)
+    pygame.draw.rect(surface, PANEL, screen, width=3, border_radius=10)
+    panel = pygame.Rect(rect.x + 30, screen.bottom + 20, rect.width - 60, rect.bottom - screen.bottom - 44)
+    pygame.draw.rect(surface, PANEL, panel, border_radius=10)
+    for index in range(4):
+        pygame.draw.circle(
+            surface,
+            (ACCENT, GOOD, BAD, HULL)[index],
+            (panel.x + 34 + index * 42, panel.centery),
+            11,
+        )
+    return screen
+
+
+def rocket_thumbnail(parts, height: int) -> pygame.Surface:
+    """The rocket, once, small enough for a cabinet screen."""
+    box = pygame.Surface(ROCKET_BOX, pygame.SRCALPHA)
+    draw_rocket(box, parts, len(parts), origin=(0, 0))
+    scale = height / ROCKET_BOX[1]
+    return pygame.transform.smoothscale(box, (int(ROCKET_BOX[0] * scale), height))
+
+
+def draw_mini_court(surface, rect: pygame.Rect, now: float) -> None:
+    """The tennis cabinet's screen: a rally that never ends."""
+    inset = rect.inflate(-36, -30)
+    corners = [
+        (inset.centerx - inset.width * 0.22, inset.top),
+        (inset.centerx + inset.width * 0.22, inset.top),
+        (inset.right, inset.bottom),
+        (inset.left, inset.bottom),
+    ]
+    pygame.draw.polygon(surface, COURT, corners)
+    pygame.draw.polygon(surface, COURT_LINE, corners, width=2)
+    travel = (1 - math.cos(now * 1.8)) / 2
+    x = inset.centerx + math.sin(now * 0.9) * inset.width * 0.18 * travel
+    y = inset.top + inset.height * travel
+    pygame.draw.circle(surface, BALL, (int(x), int(y)), int(4 + 9 * travel))

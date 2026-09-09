@@ -6,9 +6,13 @@ import pytest
 
 from mathr.domain.facts import LEVELS, LEVELS_BY_ID
 from mathr.domain.round import (
+    BALL_FLIGHT,
     BANK_PARTS,
     GRACE_PARTS,
     PARTS_TO_LAUNCH,
+    RETRY_GAP,
+    ROCKET,
+    TENNIS,
     Outcome,
     apply,
     new_round,
@@ -32,6 +36,15 @@ def test_the_round_opens_with_grace_above_the_cap():
     round_ = started()
     assert round_.seconds_left == GRACE_PARTS * round_.seconds_per_part
     assert round_.seconds_left > round_.cap
+
+
+def test_start_and_cap_derive_from_the_level_under_either_rule_set():
+    """The derivation, never the literals: retuning a level must not break this."""
+    for rules in (ROCKET, TENNIS):
+        for level in LEVELS:
+            round_ = new_round(level, random.Random(0), rules=rules)
+            assert round_.seconds_left == rules.opening_parts * level.seconds_per_part
+            assert round_.cap == rules.bank_parts * level.seconds_per_part
 
 
 def test_start_and_cap_scale_with_the_level():
@@ -77,7 +90,7 @@ def test_a_wrong_answer_costs_a_part_but_no_extra_time():
 
 def test_the_bank_empties_into_an_abduction():
     round_, outcome = tick(started(), 15.0)
-    assert outcome is Outcome.ABDUCTED
+    assert outcome is Outcome.LOST
     assert round_.failed and round_.seconds_left == 0.0
     assert not round_.launched
 
@@ -85,7 +98,7 @@ def test_the_bank_empties_into_an_abduction():
 def test_answers_after_an_abduction_are_rejected():
     dead, _ = tick(started(), 99.0)
     after, outcome = right(dead)
-    assert after is dead and outcome is Outcome.ABDUCTED
+    assert after is dead and outcome is Outcome.LOST
 
 
 def test_the_clock_stops_once_the_round_is_over():
@@ -101,7 +114,7 @@ def test_three_seconds_a_part_is_the_sustainable_pace():
         round_, outcome = tick(round_, round_.seconds_per_part)
         assert outcome is None
         round_, outcome = right(round_)
-    assert outcome is Outcome.LAUNCHED and not round_.failed
+    assert outcome is Outcome.WON and not round_.failed
 
 
 def test_a_slow_problem_is_paid_for_by_a_fast_one():
@@ -147,3 +160,62 @@ def test_elapsed_tracks_the_whole_round():
         round_, _ = tick(round_, 1.5)
         round_, _ = right(round_)
     assert round_.elapsed == pytest.approx(6.0)
+
+
+# --- the rally deadline -----------------------------------------------------
+
+
+def rally(level_id="tens"):
+    return new_round(LEVELS_BY_ID[level_id], random.Random(0), rules=TENNIS)
+
+
+def test_a_rally_opens_at_its_own_cap():
+    round_ = rally()
+    assert round_.seconds_left == round_.cap == BALL_FLIGHT * round_.seconds_per_part
+
+
+def test_a_return_refills_the_rally_rather_than_topping_it_up():
+    round_, _ = tick(rally(), 4.0)
+    after, outcome = right(round_)
+    assert outcome is Outcome.CORRECT
+    assert after.seconds_left == after.cap
+
+
+def test_the_reset_never_shortens_a_rally():
+    fresh = rally()
+    after, _ = right(fresh)
+    assert after.seconds_left == pytest.approx(fresh.seconds_left)
+
+
+def test_a_ball_that_gets_past_him_scores_a_point_and_serves_again():
+    round_ = rally()
+    missed = round_.current
+    after, outcome = tick(round_, 99.0)
+    assert outcome is Outcome.POINT
+    assert after.points == 1 and not after.failed
+    assert after.seconds_left == after.cap and after.on_current == 0.0
+    assert after.queue[RETRY_GAP] == missed
+    assert after.current != missed
+
+
+def test_three_points_lose_the_match():
+    round_ = rally()
+    for expected in (Outcome.POINT, Outcome.POINT, Outcome.LOST):
+        round_, outcome = tick(round_, 99.0)
+        assert outcome is expected
+    assert round_.failed and round_.points == 3 and not round_.launched
+
+
+def test_a_wrong_answer_leaves_the_ball_in_the_air():
+    round_, _ = tick(rally(), 2.0)
+    after, outcome = wrong(round_)
+    assert outcome is Outcome.WRONG
+    assert after.current == round_.current and after.queue == round_.queue
+    assert after.seconds_left == round_.seconds_left
+    assert after.parts == round_.parts
+    assert after.missed == 1
+
+
+def test_a_round_with_lives_cannot_be_untimed():
+    with pytest.raises(ValueError):
+        new_round(LEVELS_BY_ID["tens"], random.Random(0), timed=False, rules=TENNIS)
