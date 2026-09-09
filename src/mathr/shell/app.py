@@ -11,6 +11,7 @@ from ..domain.facts import LEVELS, LEVELS_BY_ID
 from ..domain.round import (
     FOOTBALL,
     PLACE_MAX,
+    PLACE_TOLERANCE,
     ROCKET,
     TENNIS,
     Outcome,
@@ -37,11 +38,15 @@ THROW_HOLD = 1.3  # how long a finished play is held before the next call
 
 #: What a placement's end says, and in what colour. Held for `THROW_HOLD` with
 #: the pennants still up, which is also why the next call cannot be clicked yet.
+#: A miss is not in here: it is worth reading rather than glimpsing, so it gets
+#: `render_miss` and a button instead of a second and a bit.
 VERDICTS = {
     Outcome.SECURED: ("CAUGHT!", draw.GOOD, "the ball is on the {units}"),
-    Outcome.ADRIFT: ("INCOMPLETE", draw.BAD, "same spot, throw again"),
     Outcome.LAPSED: ("DROPPED", draw.BAD, "too slow to bring it in"),
+    Outcome.SETBACK: ("RIGHT SPOT", draw.GOOD, "the ball is on the {units}"),
 }
+
+NEXT_PASS = Button(pygame.Rect(510, 716, 260, 76), "Next pass", "next", draw.PANEL)
 ROCKET_HEART = (draw.ROCKET_ORIGIN[0] + draw.BODY_X, draw.ROCKET_ORIGIN[1] + 300)
 
 
@@ -128,12 +133,13 @@ MODES = {
             Outcome.ADRIFT: "incomplete",
             Outcome.SECURED: "catch",
             Outcome.LAPSED: "drop",
+            Outcome.SETBACK: "tackle",
             Outcome.WON: "cheer",
             Outcome.LOST: "abducted",
         },
         draw.DOWNFIELD,
         "yards",
-        10,  # a part is ten yards, so the readout and the field agree
+        1,  # the marker is the line: a part is a yard, and a catch spots it exactly
         "TOUCHDOWN!",
         "TURNOVER",
         "you reached the {units}",
@@ -249,6 +255,8 @@ class Play:
     volley: Volley | None = None
     throw: tuple[int, int] | None = None  # (aimed, called), from the last placement
     throw_left: float = 0.0
+    jump: tuple[int, int] | None = None  # a sack, drawn as a hop back down the line
+    review: tuple[int, int, bool] | None = None  # a miss being explained; last is "was a sack"
 
 
 class App:
@@ -361,6 +369,9 @@ class App:
                 for button in FAIL_BUTTONS:
                     if button.rect.collidepoint(position):
                         self.fail_action(button.value)
+            elif self.play is not None and self.play.review is not None:
+                if NEXT_PASS.rect.collidepoint(position):
+                    self.play.review = None
             elif self.play is not None and self.play.round.placing is not None:
                 self.throw(position)
             else:
@@ -442,6 +453,11 @@ class App:
         play = self.play
         if play is None or play.round.over:
             return
+        if play.review is not None:
+            # Nothing to type against, so any key means "next pass" — the
+            # keyboard must not be the one way out of a screen that has a button.
+            play.review = None
+            return
         if play.round.placing is not None:
             # The click *is* the estimate. A key that resolved or dismissed a
             # placement would record an aim he never made, and typing an answer
@@ -489,14 +505,22 @@ class App:
     def throw(self, position: tuple[int, int]) -> None:
         """A click on the field, resolved as the pending placement."""
         play = self.play
-        if self.verdict(play) is not None:
+        if self.verdict(play) is not None or play.review is not None:
             return  # the last play is still on screen; this click is not aimed yet
         called = play.round.placing
+        was_sack = play.round.sacked is not None
+        before = play.round.parts
         aimed = draw.field_yards(position, PLACE_MAX)
         if aimed is None:
             return
         play.round, outcome = place(play.round, aimed)
-        play.throw = (aimed, called)
+        # A sack leaves no pass on the field to draw pennants for: the marker
+        # has already moved to where it was going to move.
+        play.throw = None if was_sack else (aimed, called)
+        # Both kinds of backwards move get the hop drawn over the field: the
+        # sack's, and the penalty a wide throw gives up.
+        moved = play.round.parts != before
+        play.jump = (before, play.round.parts) if moved else None
         play.throw_left = THROW_HOLD
         play.flash = outcome
         play.flash_left = FLASH_TIME
@@ -504,6 +528,8 @@ class App:
             # The third incompletion: `lose` owns the failure screen and its clip.
             self.lose()
             return
+        if outcome is Outcome.ADRIFT:
+            play.review = (aimed, called, was_sack)
         self.sounds.play(self.game.clips[outcome])
 
     def ball(self, play: Play) -> tuple[float, float]:
@@ -563,13 +589,14 @@ class App:
             part.step(dt)
         play.falling = [part for part in play.falling if not part.gone]
         play.flash_left = max(0.0, play.flash_left - dt)
-        if play.round.pending is None:
+        if play.round.pending is None and play.review is None:
             # The two pennants stay up for as long as the placement is live, so
             # he can see what he called and what he actually threw while he
             # answers for it — and for a moment after it resolves.
             play.throw_left = max(0.0, play.throw_left - dt)
             if play.throw_left == 0.0:
                 play.throw = None
+                play.jump = None
 
         if play.volley is not None:
             # The clock waits out the flight, the same way it waits out a lost
@@ -780,11 +807,15 @@ class App:
             play.round.parts * self.game.per_part,
             play.throw,
             self.clock_now,
+            play.jump,
         )
         if play.round.rules.place_lives is not None:
             draw.draw_attempts(
                 self.canvas, self.fonts["tiny"], play.round.adrift, play.round.rules.place_lives
             )
+        if play.review is not None:
+            self.render_miss(play)
+            return
         verdict = self.verdict(play)
         if verdict is not None:
             word, colour, aside = verdict
@@ -795,6 +826,10 @@ class App:
                 word,
                 colour,
                 aside.format(units=play.round.parts * self.game.per_part),
+            )
+        elif play.round.sacked is not None:
+            draw.draw_sack_call(
+                self.canvas, self.fonts["big"], self.fonts["small"], play.round.sacked
             )
         elif play.round.placing is not None:
             draw.draw_call(
@@ -810,6 +845,64 @@ class App:
                 else 0.5,
                 self.clock_now,
             )
+
+    def render_miss(self, play: Play) -> None:
+        """A miss, held until he says he has read it.
+
+        Self-paced and it costs him nothing: a placement is due, so the domain
+        has every clock stopped already — the same reason a hint can be read at
+        leisure.
+        """
+        aimed, called, was_sack = play.review
+        draw.text(
+            self.canvas,
+            self.fonts["big"],
+            "WRONG SPOT" if was_sack else "INCOMPLETE",
+            (640, 432),
+            draw.BAD,
+        )
+        draw.text(
+            self.canvas,
+            self.fonts["small"],
+            self.miss_line(aimed, called, was_sack),
+            (640, 478),
+            draw.DIM,
+        )
+        draw.draw_miss(
+            self.canvas,
+            self.fonts["mid"],
+            self.fonts["small"],
+            PLACE_MAX,
+            called,
+            aimed,
+            PLACE_TOLERANCE,
+        )
+        draw.text(
+            self.canvas,
+            self.fonts["small"],
+            f"the {'spot' if was_sack else 'pass'} has to be in the green"
+            f" — within {PLACE_TOLERANCE} yards",
+            (640, 655),
+            draw.DIM,
+        )
+        if play.jump is not None:
+            start, end = play.jump
+            draw.text(
+                self.canvas,
+                self.fonts["small"],
+                f"holding on the play — back {start - end}, the ball is on the {end}",
+                (640, 692),
+                draw.BAD,
+            )
+        self.button(NEXT_PASS)
+
+    @staticmethod
+    def miss_line(aimed: int, called: int, was_sack: bool = False) -> str:
+        # Which side he was on, not just by how much: "short" and "past" are the
+        # correction, and the number alone is not.
+        side = "short of" if aimed < called else "past"
+        verb = "you picked the" if was_sack else "you threw to the"
+        return f"{verb} {aimed}, {abs(aimed - called)} {side} the {called}"
 
     def render_entry(self, play: Play) -> None:
         layout = self.game.layout

@@ -74,22 +74,36 @@ Each play is a throw and then a catch:
   number goes.** Every clock stops while he aims, so the estimate is never a
   race.
 - **Within six yards** the ball is in the air, and the called yard and the one he
-  threw to stay on the field side by side. **Wider** and it says INCOMPLETE: the
-  ball does not move, a fresh yard is called from the same spot, and one of three
-  attempts is gone. **Three incompletions is a turnover.**
+  threw to stay on the field side by side. **Wider** and it is a holding call as
+  well — the ball goes **back ten yards** — and it stops for INCOMPLETE:
+  the yard he threw to and how far off it was on which side — *you threw to the
+  53, 24 past the 29* — over a number line showing the window the pass had to
+  land in, with *Next pass* to move on when he has read it. Nothing is on a
+  clock while it is up. The ball does not move, a fresh yard is called from the
+  same spot, and one of three attempts is gone. **Three incompletions is a
+  turnover.**
 - **The catch.** With the ball up, a fact appears and a football grows in the
   corner as its time runs out. Answer it in time and the catch is secured — the
-  ball is **spotted where the pass was caught**, so a short pass gains a little
-  and a deep one gains a lot. A wrong answer costs nothing while the ball is up:
-  the number line shows the route and everything, the ball included, freezes
-  until he types again.
+  ball is **spotted on the yard he threw to**, exactly: a pass to the 27 puts
+  the ball on the 27, so a short pass gains a little and a deep one gains a lot.
+  A wrong answer costs nothing while the ball is up: the number line shows the
+  route and everything, the ball included, freezes until he types again.
 - **Too slow** → DROPPED. Nothing gained and nothing lost but the seconds. The
   next call comes from the same spot with a **new fact** under it: the one that
   got away goes back into the deck to be asked again later, and the answer box is
   emptied so half of one answer cannot be submitted against the next question.
-- **A hundred yards** → touchdown. The last ten have to be run in with an
-  answer: the goal line is a labelled end of the number line, so a pass that
-  could reach it would be a free win.
+- **The sack.** About one play in four is not a pass at all — and one is
+  guaranteed once he crosses the 50 if none has hit him yet: *SACKED! back 8
+  yards — click where that leaves you*. The yardage is stated and the new spot
+  is not, so placing it is a subtraction on the line rather than a number to be
+  read off. The ball goes back either way — a near-miss cannot buy yards — and
+  the field draws the move as a labelled hop backwards, the same picture a
+  missed fact gets. It exists so the ball does not only ever march forward:
+  without it he estimates ahead of a marker halfway up the field all game and
+  the low numbers come up once.
+- **A hundred yards** → touchdown. Once he is close enough that no honest target
+  is left ahead of him the call is the end zone itself — the one easy placement
+  in a round, and the one that wins it.
 - **Clock empties, or three incompletions** → turnover, and *Try again*.
 
 Neither half of a play can be traded for the other. A placement he could confirm

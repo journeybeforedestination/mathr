@@ -227,13 +227,21 @@ def text(surface, font, value, center, colour=INK) -> pygame.Rect:
     return rect
 
 
+PIPS = 10  # the widest the row gets; a hundred of them is a texture, not a count
+
+
 def draw_progress(surface, font, done: int, total: int, noun: str = "parts", per: int = 1) -> None:
-    """One pip per part, and the count in whatever the part is worth: a
-    football part is ten yards, and "3 / 10 yards" would be a lie the field
-    standing next to it immediately contradicts."""
-    for index in range(total):
+    """A row of pips and the count itself.
+
+    One pip per part while the parts are few, and a tenth of the way each once
+    they are not: football counts in yards, so a pip is ten of them and the
+    number beside it is the yard line he is actually on.
+    """
+    pips = min(total, PIPS)
+    for index in range(pips):
         rect = pygame.Rect(700 + index * 46, 96, 34, 14)
-        pygame.draw.rect(surface, GOOD if index < done else PANEL, rect, border_radius=7)
+        lit = index < done * pips // total
+        pygame.draw.rect(surface, GOOD if lit else PANEL, rect, border_radius=7)
     text(surface, font, f"{done * per} / {total * per} {noun}", (880, 60), DIM)
 
 
@@ -699,12 +707,16 @@ def _pennant(surface, x: int, y: int, colour, size: int = 10) -> None:
     pygame.draw.polygon(surface, colour, [(x, y), (x - size, y - size), (x + size, y - size)])
 
 
-def draw_field(surface, label_font, span: int, yards: int, throw, now: float) -> None:
+def draw_field(surface, label_font, span: int, yards: int, throw, now: float, jump=None) -> None:
     """The drive: the line, and the ball carrier standing where it has reached.
 
     `throw` is (aimed, called) from the last placement, held for a moment so he
     sees the two side by side. That comparison is the whole teaching moment;
     without it a wide throw is only a noise.
+
+    `jump` is (from, to) after a sack, drawn as a labelled hop backwards — the
+    same picture `draw_number_line` draws over a missed fact, because it is the
+    same thing: a subtraction with the line underneath it.
     """
     pygame.draw.rect(surface, GRASS, FIELD, border_radius=8)
     for zone in (
@@ -733,6 +745,14 @@ def draw_field(surface, label_font, span: int, yards: int, throw, now: float) ->
         text(surface, label_font, str(value), (x, FIELD.bottom - 26), COURT_LINE)
     middle = field_x(span // 2, span)
     pygame.draw.line(surface, COURT_LINE, (middle, line_y - 22), (middle, line_y + 22), 3)
+
+    if jump is not None:
+        start, end = field_x(jump[0], span), field_x(jump[1], span)
+        peak = line_y - 54
+        pygame.draw.lines(
+            surface, BAD, False, [(start, line_y), ((start + end) // 2, peak), (end, line_y)], 4
+        )
+        text(surface, label_font, f"-{jump[0] - jump[1]}", ((start + end) // 2, peak - 22), BAD)
 
     _runner(surface, field_x(yards, span), line_y + 3, RUNNER_HEIGHT, now)
 
@@ -769,14 +789,16 @@ def draw_gridiron(surface, rect: pygame.Rect, now: float) -> None:
 
 
 def draw_attempts(surface, font, adrift: int, lives: int) -> None:
-    """Incomplete passes, under the Back button and above the field.
+    """Placements thrown or picked wide, under the Back button and above the
+    field. Both kinds count: the rule is that a placement more than the
+    tolerance out costs an attempt, whatever the play was.
 
     Filled from the left as they are spent, the same reading as the tennis
     scoreboard: what is left is what is not red yet.
     """
-    text(surface, font, "incomplete", (108, 128), DIM)
+    text(surface, font, "misses", (86, 128), DIM)
     for index in range(lives):
-        pygame.draw.circle(surface, BAD if index < adrift else PANEL, (210 + index * 36, 128), 12)
+        pygame.draw.circle(surface, BAD if index < adrift else PANEL, (150 + index * 36, 128), 12)
 
 
 def draw_call(surface, font, label_font, target: int, rect=CATCH) -> None:
@@ -784,6 +806,60 @@ def draw_call(surface, font, label_font, target: int, rect=CATCH) -> None:
     text(surface, label_font, "throw to the", (rect.centerx, rect.top + 60), DIM)
     text(surface, font, str(target), (rect.centerx, rect.top + 140), ACCENT)
     text(surface, label_font, "click the field", (rect.centerx, rect.top + 220), DIM)
+
+
+#: The panel that explains a miss. Self-paced, so it owns the band below the
+#: field on its own — the keypad is not drawn while a placement is due.
+REVIEW = pygame.Rect(100, 500, 1080, 140)
+
+
+def _review_x(value: float, span: int, rect: pygame.Rect) -> int:
+    return int(rect.left + 40 + (rect.width - 80) * max(0, min(span, value)) / span)
+
+
+def draw_miss(surface, font, label_font, span: int, called: int, aimed: int, tolerance: int,
+              rect=REVIEW) -> None:
+    """Why the pass fell incomplete: the window it had to land in, and where it
+    actually went.
+
+    The same 0-100 span as the field above it, never rescaled to the two numbers
+    at hand — a window that changed size between misses would teach that six
+    yards is however wide it looks today.
+    """
+    y = rect.centery
+    left, right = _review_x(0, span, rect), _review_x(span, span, rect)
+    pygame.draw.line(surface, DIM, (left, y), (right, y), 3)
+    for value in (0, span):
+        x = _review_x(value, span, rect)
+        pygame.draw.line(surface, DIM, (x, y - 12), (x, y + 12), 3)
+        # Below where his own mark is labelled, so a miss near an end of the
+        # line does not print one number on top of the other.
+        text(surface, label_font, str(value), (x, y + 64), DIM)
+
+    thrown = _review_x(aimed, span, rect)
+    middle = _review_x(called, span, rect)
+    # The gap first, so the window is drawn over the run into it: what is left
+    # red is exactly how far outside the green he was.
+    pygame.draw.line(surface, BAD, (thrown, y), (middle, y), 3)
+
+    low = _review_x(called - tolerance, span, rect)
+    high = _review_x(called + tolerance, span, rect)
+    pygame.draw.rect(surface, GOOD, pygame.Rect(low, y - 14, max(4, high - low), 28), border_radius=6)
+    pygame.draw.line(surface, INK, (middle, y - 28), (middle, y + 28), 3)
+    text(surface, label_font, str(called), (middle, y - 50), GOOD)
+
+    pygame.draw.circle(surface, BAD, (thrown, y), 12)
+    text(surface, label_font, str(aimed), (thrown, y + 40), BAD)
+
+
+def draw_sack_call(surface, font, label_font, loss: int, rect=VERDICT) -> None:
+    """A sack: what it cost, and the question that is really being asked.
+
+    The band, not the corner the throw call uses — there is no ball coming in to
+    leave room for, and the sentence is the whole play.
+    """
+    text(surface, font, f"SACKED! back {loss} yards", (rect.centerx, rect.top + 60), BAD)
+    text(surface, label_font, "click where that leaves you", (rect.centerx, rect.top + 130), DIM)
 
 
 def draw_verdict(surface, font, label_font, word: str, colour, aside: str, rect=VERDICT) -> None:

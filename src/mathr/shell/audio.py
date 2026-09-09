@@ -154,6 +154,22 @@ def _catch():
     return _Shape(seconds, wave)
 
 
+def _tackle():
+    """The sack: a low thud with no ring to it. It is not a failure sound —
+    getting the spot right is a small win inside a bad play."""
+    seconds = 0.28
+    rng = random.Random(31)
+    noise = [rng.uniform(-1, 1) for _ in range(2048)]
+
+    def wave(t):
+        thud = math.sin(2 * math.pi * (150 - 60 * t / seconds) * t)
+        return (0.8 * thud + 0.3 * noise[int(t * 4000) % len(noise)]) * _envelope(
+            t, seconds, attack=0.005
+        )
+
+    return _Shape(seconds, wave)
+
+
 def _throw():
     """The ball leaving his hand: a short rising whoosh, so a good placement is
     audibly *not* the catch it might still become."""
@@ -201,6 +217,7 @@ class Sounds:
                 "catch": _tone(_catch(), amplitude=0.45),
                 "incomplete": _tone(_incomplete(), amplitude=0.25),
                 "throw": _tone(_throw(), amplitude=0.3),
+                "tackle": _tone(_tackle(), amplitude=0.4),
             }
         except pygame.error:
             self._clips = {}

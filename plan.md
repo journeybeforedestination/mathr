@@ -1573,6 +1573,42 @@ gives. Two skills per play, neither tradeable for the other. It cost two `Round`
 fields, one `Rules` dial, two `Outcome` members, a branch in `apply` that plays
 by the rally's rules rather than football's, and a lapse path in `tick`.
 
+**The marker was tens of yards, so a catch on the 27 spotted the ball on the
+20.** `parts` was the position in tens and `Rules.target` stayed at ten, so
+`_secure` floor-divided every catch down to the nearest part — which reads at
+the table as "it just advances ten yards", and quietly makes the number he
+estimated not the number he gets. A placement mode's `target` is now `PLACE_MAX`
+and the marker *is* the line, with `new_round` raising rather than letting the
+two disagree. Two consequences worth recording: `draw_progress` shows a tenth
+per pip instead of a hundred pips, and the run-in disappeared — close to the end
+the call is the goal line itself, so the touchdown is a caught pass rather than
+a walk-in, which is the better football anyway.
+
+**And the ball only ever went forwards.** With the marker climbing the line, he
+estimates ahead of wherever it has got to; the low numbers come up once, at the
+start, and by the second half of a drive the whole task lives in the last
+quarter of the line. Sacks are the fix: about a play in four loses ground
+(`SACK_CHANCE`), and the placement they ask for is the one he is *not* told —
+he is told what it cost, and has to say where that leaves him. That makes a
+sack a subtraction modelled on the line, which is the same thing
+`draw_number_line` draws over a missed fact, and the field draws the move as a
+labelled hop backwards for the same reason. The ball lands where it lands
+whatever he clicks: spotting it at his click would make a sack the cheapest way
+up the field, a few yards forward of the truth every time, inside the tolerance.
+Considered and rejected: a real-time pass rush that could fire while the ball is
+in the air — a second clock racing the same answer the catch deadline already
+races, and indistinguishable from it when you lose.
+
+**And a good drive still never went backwards.** Sacks at one play in four are
+a distribution, not a guarantee: three long catches finish a drive having never
+been pushed back once, and every estimate after the first then lives in the top
+half of the line. Two rules close it — a sack is due past `SACK_BY` if none has
+landed yet, and a wide throw is a holding call worth `PLACE_PENALTY` of ground
+on top of the attempt it spends. The second is the more important of the two: a
+miss at the top of the field used to cost nothing he could see, which made
+clicking until one stuck the cheapest way to finish. A missed *sack* spot is
+deliberately not penalised again; the play has already taken its ground.
+
 **A miss had no cost, so it became three strikes.** A wide placement used to
 leave an ordinary running down behind it, worth ten yards for a right answer —
 which made the cheapest way to play the mode "click anywhere, then answer the

@@ -24,11 +24,11 @@ BALL_FLIGHT = 1.5  # how many problems' worth of time a served ball takes to lan
 #: A placement: a number is named and he points at where it goes on a bare line.
 #: The domain knows a span and a tolerance, never a football.
 #:
-#: In a placement mode the line and the parts bar are **the same axis**: one
-#: part covers `PLACE_MAX / rules.target` of the line, the marker sits at
-#: `parts` along it, and a good placement moves the marker to where it landed.
-#: That is what makes the target meaningful rather than a number to be scored
-#: against — and it is why the target is always drawn *ahead* of the marker.
+#: In a placement mode the marker **is** the line: `rules.target == PLACE_MAX`,
+#: `parts` is the position along it, and a confirmed placement moves the marker
+#: to exactly the value that was called. Anything coarser — parts as tens of
+#: yards, say — makes a pass caught on the 27 land on the 20, and the number he
+#: estimated stops being the number he gets, which is the whole mode.
 PLACE_MAX = 100  # the span of the line, in whatever the mode calls units
 PLACE_TOLERANCE = 6  # how far off still counts
 PLACE_LIVES = 3  # incomplete placements the round survives
@@ -38,6 +38,22 @@ PLACE_GAIN_MAX = 40  # and the furthest
 #: answer before it lapses. Two skills, one play — where the number goes, and
 #: then the fact — and neither can be traded for the other.
 CATCH_PARTS = 1.5  # how long the confirmation has, in problems
+#: Some plays lose ground instead of gaining it, and the marker going backwards
+#: is the point of them: without it he only ever estimates ahead of a marker
+#: that marches up the line, and the low numbers come up once, at the start.
+#: The yardage is *stated* and the new spot is not, so placing it is a
+#: subtraction modelled on the line rather than a number to be read off.
+SACK_CHANCE = 0.25  # how often a play is a sack rather than a throw
+SACK_MIN = 4  # yards it costs
+SACK_MAX = 12
+#: And one is overdue past halfway if none has happened yet. Three long catches
+#: can otherwise walk the length of the line without the marker ever going
+#: backwards, which is the run of play this mode has least to teach in.
+SACK_BY = PLACE_MAX // 2
+#: A wide placement gives up ground as well as an attempt. Without it a miss at
+#: the top of the field costs nothing he can see, and the cheapest way to finish
+#: a drive is to keep clicking until one sticks.
+PLACE_PENALTY = 10
 #: Offsets, drawn once per round and cycled. `asked` has no upper bound — the
 #: deck replays — so a long enough round reaches the end of any fixed draw.
 #: Cycling is invisible here because the target is the offset *plus wherever
@@ -61,6 +77,7 @@ class Outcome(Enum):
     ADRIFT = "adrift"  # too far off, and there is nothing to confirm
     SECURED = "secured"  # the answer landed in time and the marker moved
     LAPSED = "lapsed"  # it did not, and the placement came to nothing
+    SETBACK = "setback"  # the marker was driven back, and he placed where to
     WON = "won"
     LOST = "lost"
 
@@ -99,13 +116,8 @@ TENNIS = Rules(BALL_FLIGHT, BALL_FLIGHT, BALL_FLIGHT, False, False, 3, 10)
 #: placement is the whole reason the mode exists, and the arithmetic around it
 #: is what there are already two other modes for.
 FOOTBALL = Rules(
-    GRACE_PARTS, BANK_PARTS, 1.0, True, True, None, PARTS_TO_LAUNCH, True, CATCH_PARTS, PLACE_LIVES
+    GRACE_PARTS, BANK_PARTS, 1.0, True, True, None, PLACE_MAX, True, CATCH_PARTS, PLACE_LIVES
 )
-
-
-def _spot(rules: Rules) -> int:
-    """How much of the line one part covers. Ten yards, for football."""
-    return PLACE_MAX // rules.target
 
 
 @dataclass(frozen=True)
@@ -170,6 +182,9 @@ class Round:
     """
 
     gains: tuple[int, ...] = ()  # how far ahead each placement is, from `new_round`
+    sacks: tuple[int, ...] = ()  # what a sack would cost, per play
+    sack_at: tuple[bool, ...] = ()  # and which plays are one
+    sacks_taken: int = 0  # how many have actually happened
     placed: int = 0  # how many placements have been resolved
     aims: Mapping[str, Aim] = field(default_factory=dict)  # bucket -> Aim
     pending: int | None = None  # a good placement, waiting on its answer
@@ -185,6 +200,29 @@ class Round:
         return self.launched or self.failed
 
     @property
+    def sacked(self) -> int | None:
+        """Ground this play loses, if it is a sack rather than a throw.
+
+        Never when there is less on the field than the sack would take: a loss
+        that would bury the marker at zero is arithmetic with nothing in it, and
+        the first plays of a round are for driving.
+        """
+        if not self.rules.places or self.over or self.hint is not None:
+            return None
+        if self.pending is not None:
+            return None
+        if not self.sacks:
+            return None
+        slot = self.placed % len(self.sacks)
+        loss = self.sacks[slot]
+        if loss >= self.parts:
+            return None  # nothing on the field to give up
+        # Past halfway with none taken, the next play is one whatever the draw
+        # said: a drive that never goes backwards is the easiest one to make.
+        overdue = self.sacks_taken == 0 and self.parts > SACK_BY
+        return loss if self.sack_at[slot] or overdue else None
+
+    @property
     def placing(self) -> int | None:
         """The value waiting to be placed, or None.
 
@@ -197,8 +235,8 @@ class Round:
         as another attempt from the same spot, and a confirmed one is followed
         by the answer that confirmed it and then by the next. The only reasons
         there is none are that the round is over, that a hint is up, that one is
-        already pending, or that the marker is inside the last part — where
-        there is nowhere ahead to aim and the rest has to be answered for.
+        already pending. Every question he answers is one confirming a
+        placement; there is no other kind of down in a mode that places.
 
         The hint wins: a wrong answer raises both at once, and settling it here
         keeps the shell free of the rule. `dismiss` then makes the placement
@@ -212,12 +250,18 @@ class Round:
             return None
         if self.pending is not None:
             return None  # one is already in the air
-        spot = _spot(self.rules)
-        here = self.parts * spot
-        target = min(PLACE_MAX - 1, here + self.gains[self.placed % len(self.gains)])
-        # Within one part of the end there is nowhere ahead left to aim: the
-        # last stretch has to be covered by answers.
-        return target if target - here >= spot else None
+        loss = self.sacked
+        if loss is not None:
+            # The one target that is *behind* the marker, and the one he is not
+            # told: he is told what it cost, and has to say where that leaves him.
+            return self.parts - loss
+        here = self.parts
+        if here + PLACE_GAIN_MIN > PLACE_MAX - 1:
+            # Close enough that no honest target is left ahead of him, so the
+            # call is the end of the line itself. It is the one easy placement
+            # in a round, and it is the one that wins it.
+            return PLACE_MAX
+        return min(PLACE_MAX - 1, here + self.gains[self.placed % len(self.gains)])
 
     @property
     def confirm_seconds(self) -> float:
@@ -266,6 +310,10 @@ def new_round(
     if not timed and rules.lives is not None:
         # A rally has nowhere to put the ball without a deadline to fly along.
         raise ValueError("a round with lives cannot be untimed")
+    if rules.places and rules.target != PLACE_MAX:
+        # The marker is the line. A shorter bar would quietly round every catch
+        # down to the nearest part instead of spotting it where it was called.
+        raise ValueError("a placement mode must run the length of the line")
     # The whole pool stays in the deck and only its order is biased: a ten-part
     # round draws from the front, so ordering is selection, and no level can
     # ever empty itself into a "mastered" state the level screen would have to
@@ -279,6 +327,16 @@ def new_round(
         tuple(rng.choices(range(PLACE_GAIN_MIN, PLACE_GAIN_MAX + 1), k=PLACE_DRAWS))
         if rules.places
         else ()
+    )
+    # What each play would cost and whether it is one are drawn apart, because
+    # the halfway rule needs a yardage for a play the draw did not pick.
+    sacks = (
+        tuple(rng.randrange(SACK_MIN, SACK_MAX + 1) for _ in range(PLACE_DRAWS))
+        if rules.places
+        else ()
+    )
+    sack_at = (
+        tuple(rng.random() < SACK_CHANCE for _ in range(PLACE_DRAWS)) if rules.places else ()
     )
     return Round(
         level_id=level.id,
@@ -299,6 +357,8 @@ def new_round(
         elapsed=0.0,
         hint=None,
         gains=gains,
+        sacks=sacks,
+        sack_at=sack_at,
     )
 
 
@@ -441,11 +501,14 @@ def place(round: Round, value: int) -> tuple[Round, Outcome]:
         raise ValueError("no placement is pending")
     error = abs(value - called)
     good = error <= PLACE_TOLERANCE
+    lost = round.sacked
+    if lost is not None:
+        return _take_the_loss(round, called, good)
     bucket = str(called // 10 * 10)
-    # A wide one advances nothing at all — not the marker, not the queue, not
-    # the question under it. It costs an attempt, and `place_lives` of them end
-    # the round; that is the whole price of a miss, and it is why the next call
-    # comes from the same spot.
+    # A wide one touches neither the queue nor the question under it: there is
+    # nothing to re-ask, and the next call comes from wherever the penalty
+    # leaves him. What it costs is an attempt and `PLACE_PENALTY` of ground —
+    # `place_lives` attempts end the round.
     adrift = round.adrift + (not good)
     lives = round.rules.place_lives
     turnover = not good and lives is not None and adrift >= lives
@@ -454,6 +517,9 @@ def place(round: Round, value: int) -> tuple[Round, Outcome]:
         placed=round.placed + 1,
         adrift=adrift,
         failed=turnover,
+        # Floored here rather than in the renderer: a negative marker indexes
+        # the line from the far end.
+        parts=round.parts if good else max(0, round.parts - PLACE_PENALTY),
         aims={**round.aims, bucket: round.aims.get(bucket, Aim()).record(error)},
         pending=called if good else None,
         # An untimed round has no deadline to put on the confirmation either:
@@ -467,13 +533,41 @@ def place(round: Round, value: int) -> tuple[Round, Outcome]:
     return taken, Outcome.PLACED if good else Outcome.ADRIFT
 
 
-def _secure(round: Round) -> tuple[int, bool]:
-    """The marker, moved to the placement being confirmed.
+def _take_the_loss(round: Round, spot: int, good: bool) -> tuple[Round, Outcome]:
+    """A sack, placed. The marker goes back whichever way it was placed.
 
-    `max`, not assignment: the target is always ahead, and floor division must
-    never be able to walk the marker backwards.
+    Spotting it at his click instead would make a sack the cheapest way up the
+    field — a few yards forward of the truth, every time, inside the tolerance.
+    The yardage is a fact of the play; only saying where it leaves him is his.
+
+    Nothing goes into `aims` either. That record is how far off he is when he is
+    *shown* a number, and an error here is as much the subtraction as the line.
     """
-    parts = max(round.parts, round.pending // _spot(round.rules))
+    adrift = round.adrift + (not good)
+    lives = round.rules.place_lives
+    turnover = not good and lives is not None and adrift >= lives
+    # No `PLACE_PENALTY` here: the play has already taken its ground, and a
+    # missed spot would otherwise cost twice for one mistake.
+    taken = replace(
+        round,
+        parts=spot,
+        placed=round.placed + 1,
+        adrift=adrift,
+        failed=turnover,
+        sacks_taken=round.sacks_taken + 1,
+    )
+    if turnover:
+        return taken, Outcome.LOST
+    return taken, Outcome.SETBACK if good else Outcome.ADRIFT
+
+
+def _secure(round: Round) -> tuple[int, bool]:
+    """The marker, moved to exactly the value that was placed.
+
+    `max` rather than assignment so that nothing here can ever walk the marker
+    backwards, whatever a later rule does to the targets.
+    """
+    parts = max(round.parts, round.pending)
     return parts, parts >= round.rules.target
 
 

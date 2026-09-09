@@ -57,7 +57,7 @@ src/mathr/
     app.py        App: event loop, Mode, three screens, all the wiring
     draw.py       palette, rocket, alien, court, field, runner, cabinets,
                   buttons, number line, Layout, the transform
-    audio.py      eleven synthesized clips, no asset files
+    audio.py      twelve synthesized clips, no asset files
 tests/
   test_facts.py   pool contents, key stability, both orientations
   test_round.py   parts, re-queue, both win conditions
@@ -102,10 +102,14 @@ These are the dials, and they are meant to be turned after watching him play.
 | `WEIGHT_CEILING` | `domain/round.py` | 4.0 | and how far one slow fact can rise |
 | `PLACE_MAX` | `domain/round.py` | 100 | the span of the field, in yards |
 | `PLACE_TOLERANCE` | `domain/round.py` | 6 | how far off still completes the pass |
-| `PLACE_LIVES` | `domain/round.py` | 3 | wide throws before a turnover |
+| `PLACE_LIVES` | `domain/round.py` | 3 | placements missed before a turnover |
 | `PLACE_GAIN_MIN` | `domain/round.py` | 10 | nearest a called yard can be |
 | `PLACE_GAIN_MAX` | `domain/round.py` | 40 | and furthest |
 | `CATCH_PARTS` | `domain/round.py` | 1.5 | how long the catch has, in problems |
+| `SACK_CHANCE` | `domain/round.py` | 0.25 | how often a play loses ground instead |
+| `SACK_MIN` / `SACK_MAX` | `domain/round.py` | 4 / 12 | and how much it costs |
+| `SACK_BY` | `domain/round.py` | 50 | past here, one is overdue if none has hit |
+| `PLACE_PENALTY` | `domain/round.py` | 10 | ground a wide throw gives up |
 | `THROW_HOLD` | `shell/app.py` | 1.3s | how long a finished play is held |
 | `RUNNER_HEIGHT` | `shell/draw.py` | 46 | the ball carrier, in design pixels |
 | `STRIPE_EVERY` | `shell/draw.py` | `None` | yard stripes, in yards; `None` is the bare line |
@@ -172,16 +176,27 @@ he had already entered are still sitting in the box waiting to be submitted
 against a question that has moved on. `App.update` clears `play.entry` on the
 same frame for the second half of that.
 
+**A miss is read, not glimpsed.** A wide placement sets `Play.review` and holds
+`render_miss` — the two numbers, the window it had to land in, and a *Next pass*
+button — until he dismisses it, where CAUGHT and DROPPED get `THROW_HOLD` and a
+banner. The shell may pace this without breaking the "no rules in the shell"
+line because the domain has already stopped every clock: a placement is due, so
+`tick` returns early. The button is what makes it safe — a click on the *field*
+must never double as a dismissal, or reading the panel throws the next pass at
+whatever yard he happened to be looking at. `press` clears it too, so the
+keyboard is not dead in front of a screen the mouse can leave.
+
 **A lapse carries no hint**, unlike every other way of running out of time here.
 The next thing it asks for is a click on the field, and a hint can only be put
 away by typing; a click that dismissed one would also be a throw, aimed wherever
 he happened to be reading. The verdict banner is the feedback instead.
 
-**A wide placement costs an attempt, and `place_lives` of them end the round.**
-`place` returns LOST on the third, not ADRIFT, and sets `failed` — the shell's
-`throw` hands that straight to `lose`, which owns the failure screen and its
-clip. Without the attempt counter the line can be clicked at idly until
-something sticks, which is the one way to play this mode without estimating.
+**A placement missed by more than the tolerance costs an attempt — a thrown one
+and a sack alike — and `place_lives` of them end the round.** `place` returns
+LOST on the third, not ADRIFT, and sets `failed`; the shell's `throw` hands that
+straight to `lose`, which owns the failure screen and its clip. Without the
+attempt counter the line can be clicked at idly until something sticks, which is
+the one way to play this mode without estimating.
 
 **A wrong answer under a pending placement plays by the rally's rules, not the
 mode's.** No part lost, the queue untouched, the question still up — even though
@@ -189,14 +204,40 @@ mode's.** No part lost, the queue untouched, the question still up — even thou
 stops every clock including `pending_left`, so he reads the number line with the
 ball held exactly where it was, which is the same bargain tennis makes.
 
-**A placement target is always ahead of the marker, and a good one moves the
-marker to it.** In a placement mode the line and the parts bar are the same
-axis: one part covers `PLACE_MAX // rules.target` of the line. `placing` adds a
-drawn offset to `parts * spot`, so it can never call a yard behind the ball —
-which played as a pass thrown backwards down the field, a mechanic that works
-while the metaphor around it is a lie. Inside the last part there is nowhere
-ahead to aim and `placing` is None: the goal line is a *labelled* end of the
-line, so a placement that could reach it would be a free win every time.
+**The marker is the line.** `rules.target == PLACE_MAX` in a placement mode, so
+`parts` is a position on the line and a catch on the 27 spots the ball on the
+27. Anything coarser — parts as tens of yards, which is how this first shipped —
+rounds every catch down to the nearest part, and the number he estimated stops
+being the number he gets, which is the whole mode. `new_round` raises rather
+than letting a placement mode disagree, and `draw_progress` shows a tenth per
+pip rather than a hundred pips.
+
+**A placement target is ahead of the marker, except a sack, which is behind it
+and is the one he is not told.** An ordinary call is a drawn offset added to
+`parts`, so it can never name a yard behind the ball — that played as a pass
+thrown backwards down the field, a mechanic that works while the metaphor around
+it is a lie. Close to the end the call is `PLACE_MAX` itself: the goal line is a
+*labelled* end, so it is the one easy placement in a round, and it is the one
+that wins it.
+
+**A drive that never goes backwards is the one with least in it.** Three long
+catches walk the length of the line, and every estimate in the second half of
+that drive lives in the top quarter of it. Two rules stop it: past `SACK_BY` a
+sack is due whatever the draw said if none has happened yet (`sacks_taken == 0`,
+which is why that count is a field and not derived from `placed`), and a wide
+throw gives up `PLACE_PENALTY` of ground on top of the attempt. A missed *sack*
+spot is not penalised again — the play has already taken its ground, and
+charging twice for one mistake is what makes a mode feel arbitrary.
+
+**A sack lands where it lands, whatever he clicks.** `_take_the_loss` spots the
+ball at `parts - loss` on both paths. Spotting it at his click would make a sack
+the cheapest way up the field — a few yards forward of the truth, every time,
+inside the tolerance. What his click buys is only whether it cost an attempt.
+
+**A sack records nothing in `aims`.** That record is how far off he is when he
+is *shown* a number; an error on a sack is as much the subtraction as the line,
+and folding the two together would read later as estimation drift that never
+happened.
 
 **The hint wins over a due placement.** A wrong answer raises both at once; the `hint is not None` clause in `placing` settles it in
 the domain, and `dismiss` then makes the throw live with no extra code. If the

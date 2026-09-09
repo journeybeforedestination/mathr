@@ -11,7 +11,9 @@ import pytest
 
 from mathr.domain.round import (
     FOOTBALL,
+    PLACE_PENALTY,
     RETRY_GAP,
+    SACK_BY,
     PLACE_GAIN_MIN,
     PLACE_LIVES,
     PLACE_MAX,
@@ -25,7 +27,8 @@ from mathr.domain.round import (
 )
 from mathr.domain.facts import LEVELS_BY_ID
 
-SPOT = PLACE_MAX // FOOTBALL.target  # what one part covers, on the line
+# The marker is the line: `FOOTBALL.target` is `PLACE_MAX`, so `parts` is a
+# position on it and a catch on the 27 spots the ball on the 27.
 
 
 def drive(level_id="fives", timed=True):
@@ -107,15 +110,13 @@ def test_a_good_placement_costs_no_attempt():
 def test_every_call_is_ahead_of_the_marker():
     """A target behind the marker plays as a pass thrown backwards: the
     mechanic works and the metaphor around it is a lie."""
-    round_ = drive()
+    # Sacks are the one call behind him, and one is overdue past halfway.
+    round_ = replace(drive(), sacks=(8,), sack_at=(False,), sacks_taken=1)
     for _ in range(12):
         if round_.over:
             break
         called = round_.placing
-        if called is None:  # inside the last spot there is nowhere left to aim
-            round_, _ = right(round_)
-            continue
-        assert called >= round_.parts * SPOT + PLACE_GAIN_MIN or called == PLACE_MAX - 1
+        assert called >= round_.parts + PLACE_GAIN_MIN or called >= PLACE_MAX - 1
         round_, _ = place(round_, called)
         round_, _ = right(round_)
 
@@ -125,13 +126,15 @@ def test_a_target_sits_on_the_line():
     assert 0 <= drive().placing <= PLACE_MAX
 
 
-def test_a_call_near_the_end_asks_for_no_placement():
-    """Within one part of the end there is nowhere ahead to aim, so the last
-    stretch has to be covered by answers."""
-    close = replace(drive(), parts=FOOTBALL.target - 1)
-    assert close.placing is None
-    won, outcome = right(close)
-    assert outcome is Outcome.WON and won.parts == FOOTBALL.target
+def test_the_last_call_is_the_end_zone():
+    """Close in there is no honest target left ahead of him, so the call is the
+    end of the line itself — the one easy placement, and the one that wins."""
+    close = replace(drive(), parts=PLACE_MAX - PLACE_GAIN_MIN, sacks_taken=1)
+    assert close.placing == PLACE_MAX
+    taken, outcome = place(close, PLACE_MAX)
+    assert outcome is Outcome.PLACED
+    won, outcome = right(taken)
+    assert outcome is Outcome.WON and won.parts == PLACE_MAX
 
 
 def test_placing_twice_over_raises():
@@ -152,12 +155,14 @@ def test_a_good_placement_moves_nothing_on_its_own():
 
 
 def test_the_confirming_answer_moves_the_marker_to_where_it_was_called():
+    """Exactly there — a catch on the 27 is the ball on the 27. Rounding it down
+    to the nearest ten makes the number he estimated not the number he gets."""
     round_ = drive()
     called = round_.placing
     taken, _ = thrown(round_)
     after, outcome = right(taken)
     assert outcome is Outcome.SECURED
-    assert after.parts == called // SPOT
+    assert after.parts == called
     assert after.pending is None and after.pending_left is None
 
 
@@ -168,12 +173,28 @@ def test_exactly_on_the_tolerance_is_good_and_one_past_it_is_not():
     assert outcome is Outcome.ADRIFT and wide.pending is None
 
 
-def test_a_wide_placement_costs_no_parts_and_no_time():  # only an attempt
-    round_ = drive()
+def test_a_wide_throw_gives_up_ground_as_well_as_an_attempt():
+    """Holding on the play. Without it a miss at the top of the field costs
+    nothing he can see, and clicking until one sticks is the cheapest drive."""
+    round_ = replace(drive(), parts=40, sacks_taken=1)
     after, _ = thrown(round_, error=40)
-    assert after.parts == round_.parts
+    assert after.parts == 40 - PLACE_PENALTY
     assert after.seconds_left == round_.seconds_left
     assert after.queue == round_.queue
+
+
+def test_the_penalty_cannot_push_the_marker_off_the_line():
+    round_ = replace(drive(), parts=4)
+    after, _ = thrown(round_, error=40)
+    assert after.parts == 0
+
+
+def test_a_missed_sack_spot_is_not_penalised_twice():
+    """The play has already taken its ground; the spot being wrong costs the
+    attempt and nothing more."""
+    round_ = sack(loss=8, parts=40)
+    after, _ = place(round_, round_.placing + 30)
+    assert after.parts == 32
 
 
 def test_the_distance_is_recorded_by_decade_bucket():
@@ -297,3 +318,88 @@ def test_a_mode_without_placements_never_asks_for_one():
 
 def test_the_offsets_are_deterministic_per_seed():
     assert drive().gains == drive().gains
+
+
+# --- sacks -------------------------------------------------------------------
+
+
+def sack(loss: int = 8, parts: int = 40):
+    """A drive on the `parts`, with the next play losing `loss` yards."""
+    return replace(drive(), parts=parts, sacks=(loss,), sack_at=(True,))
+
+
+def no_sack(parts: int = 40):
+    """A drive on the `parts` whose draw holds no sack at all."""
+    return replace(drive(), parts=parts, sacks=(8,), sack_at=(False,))
+
+
+def test_a_sack_asks_for_the_spot_it_leaves_him_on():
+    """Told what it cost, not where it puts him: the target is a subtraction
+    modelled on the line, which is the one placement he cannot read off."""
+    round_ = sack(loss=8, parts=40)
+    assert round_.sacked == 8
+    assert round_.placing == 32
+
+
+def test_placing_a_sack_moves_the_marker_back_and_asks_nothing_else():
+    round_ = sack()
+    after, outcome = place(round_, round_.placing)
+    assert outcome is Outcome.SETBACK
+    assert after.parts == round_.placing
+    assert after.pending is None  # no pass to catch: the play is over
+    assert after.placing is not None  # and the next call comes straight away
+
+
+def test_a_sack_lands_where_it_lands_however_it_is_placed():
+    """Spotting it at his click would make a sack the cheapest way up the field:
+    a few yards forward of the truth, every time, inside the tolerance."""
+    round_ = sack()
+    near, _ = place(round_, round_.placing + PLACE_TOLERANCE)
+    wide, outcome = place(round_, round_.placing + PLACE_TOLERANCE + 20)
+    assert near.parts == wide.parts == round_.placing
+    assert outcome is Outcome.ADRIFT
+
+
+def test_a_badly_placed_sack_costs_an_attempt_like_any_other():
+    round_ = sack()
+    after, _ = place(round_, round_.placing + 30)
+    assert after.adrift == 1
+
+
+def test_a_sack_records_nothing_in_the_aims():
+    """`aims` is how far off he is when he is *shown* a number. An error here is
+    as much the subtraction as the line, and would read as estimation drift."""
+    round_ = sack()
+    after, _ = place(round_, round_.placing + 20)
+    assert after.aims == {}
+
+
+def test_there_is_no_sack_with_nothing_to_lose():
+    round_ = sack(loss=12, parts=9)
+    assert round_.sacked is None
+    assert round_.placing > round_.parts  # an ordinary call, ahead of him
+
+
+def test_sacks_are_deterministic_per_seed():
+    assert (drive().sacks, drive().sack_at) == (drive().sacks, drive().sack_at)
+    assert any(drive().sack_at) and not all(drive().sack_at)
+
+
+def test_crossing_halfway_untouched_brings_one_on():
+    """Three long catches can otherwise walk the line without the marker ever
+    going backwards, which is the run of play there is least to learn in."""
+    assert no_sack(parts=SACK_BY).sacked is None
+    assert no_sack(parts=SACK_BY + 1).sacked == 8
+
+
+def test_the_overdue_sack_comes_only_once():
+    round_ = no_sack(parts=SACK_BY + 1)
+    after, _ = place(round_, round_.placing)
+    assert after.sacks_taken == 1
+    assert after.sacked is None  # the draw is back in charge
+
+
+def test_a_sack_that_was_drawn_counts_as_the_one():
+    taken, _ = place(sack(parts=30), sack(parts=30).placing)
+    assert taken.sacks_taken == 1
+    assert replace(taken, parts=SACK_BY + 1, sack_at=(False,)).sacked is None
