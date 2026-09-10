@@ -1,6 +1,18 @@
 import random
 
-from mathr.domain.facts import LEVELS, LEVELS_BY_ID, Question, Strategy, shuffled
+import pytest
+
+from mathr.domain.facts import (
+    FRACTION_LEVELS,
+    LEVELS,
+    LEVELS_BY_ID,
+    SPAN,
+    Question,
+    Strategy,
+    Target,
+    shuffled,
+    targets,
+)
 
 TIMES = {
     "+": lambda a, b: a + b,
@@ -175,3 +187,82 @@ def test_the_worked_examples():
 def test_orientation_does_not_change_the_route():
     fact = LEVELS_BY_ID["bridge"].facts[0]
     assert Question(fact, True).strategy == Question(fact, False).strategy == fact.strategy
+
+
+def test_fraction_pool_sizes():
+    assert {level.id: len(level.targets) for level in FRACTION_LEVELS} == {
+        "halves": 4,
+        "thirds": 7,
+        "fifths": 13,
+        "eighths": 18,
+        "same_as": 14,
+        "fractions": 56,
+    }
+
+
+def test_every_fraction_pool_is_derived_from_the_others():
+    families = [level for level in FRACTION_LEVELS if level.id != "fractions"]
+    assert LEVELS_BY_ID["fractions"].targets == tuple(
+        target for level in families for target in level.targets
+    )
+
+
+def test_a_fraction_level_has_no_facts_and_a_fact_level_has_no_targets():
+    for level in FRACTION_LEVELS:
+        assert level.facts == ()
+    for level in LEVELS:
+        assert level.targets == ()
+
+
+def test_every_target_has_a_tick_to_land_on():
+    for level in FRACTION_LEVELS:
+        for target in level.targets:
+            assert target.ticks % target.den == 0, target.key
+            assert 0 < target.num < target.den, target.key
+
+
+def test_no_target_is_an_end_of_the_line():
+    """0/b and b/b are labelled already, so they measure nothing."""
+    for level in FRACTION_LEVELS:
+        for target in level.targets:
+            assert 0 < target.value < SPAN
+
+
+def test_the_span_keeps_every_tolerance_whole():
+    """The check that chose 240 over 120. Re-run it before adding a level."""
+    denominators = {target.ticks for level in FRACTION_LEVELS for target in level.targets}
+    assert not [d for d in denominators if SPAN % d or (SPAN // d) % 2]
+    for level in FRACTION_LEVELS:
+        for target in level.targets:
+            assert target.tolerance * 2 * target.ticks == SPAN
+
+
+def test_a_route_is_hops_of_one_tick_and_lands_on_the_fraction():
+    for level in FRACTION_LEVELS:
+        for target in level.targets:
+            route = target.strategy
+            assert len(route.jumps) == target.num
+            # In tick units: the route ends on the mark, and the mark scaled by
+            # the tick gap is the value on the span.
+            assert route.end * (SPAN // target.ticks) == target.value
+
+
+def test_equivalence_says_the_same_place_in_a_different_partition():
+    thirds = Target(1, 3, 3)
+    sixths = Target(1, 3, 6)
+    assert thirds.value == sixths.value
+    assert thirds.key != sixths.key  # different questions, different rows
+    assert sixths.strategy == Strategy(0, (2,))
+
+
+def test_a_target_deck_is_the_whole_pool_and_replays_by_seed():
+    pool = LEVELS_BY_ID["thirds"].targets
+    deck = targets(pool, random.Random(4))
+    assert sorted(deck, key=lambda t: t.key) == sorted(pool, key=lambda t: t.key)
+    assert deck == targets(pool, random.Random(4))
+
+
+def test_a_target_has_no_answer_to_type():
+    """Anything reaching for one is a keypad path that must raise, not compare."""
+    with pytest.raises(AttributeError):
+        _ = Target(1, 2, 2).answer

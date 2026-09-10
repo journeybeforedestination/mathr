@@ -22,6 +22,12 @@ rather than only wrong. The slow-but-correct fact is the one worth drilling and
 the one a right/wrong count cannot see.
 
 ## More levels
+- **The rest of the times tables** — 3s, 4s, 6s, 7s, 8s, 9s, and their divisions.
+  `_times` and `_divided` already generate them from a single number, so the
+  content is free; the cost is entirely the level screen, which is full at twelve
+  cards. `3.OA.C.7` names fluency within 100 by the end of grade 3 and three of
+  the nine tables are lit, so this is the largest curricular gap that costs no
+  new mechanic at all — only a layout decision.
 - Two-digit addition/subtraction without regrouping (34+25, 68−43).
 - Two-digit **with** regrouping (37+28, 62−45) — the genuinely hard one. Typed
   answers plus mental carrying may need scratch paper; watch him before building.
@@ -149,6 +155,103 @@ readability trade, not a teaching one. `placements` is the data that would tell 
 is needed: mean error per decade bucket, once there are enough attempts in each
 to plot. A parent-facing view of it is the same deferral, and belongs with the
 parent view of weak facts above.
+
+## More of the fraction line
+Curling ships two level families: four plain ones where the ticks match the
+denominator, and `same_as`, where they are a multiple of it and the line ticked
+in sixths is asked for `1/3`. Two more were designed and deferred.
+
+- **Past one.** A 0–2 line, and `5/4` or `1 1/2` on it. `3.NF.A.2b` allows it and
+  grade 4 needs it. The cost is one honest thing: the span stops being "the
+  whole", so the labels have to say what the line runs to, and `SPAN` stops being
+  the denominator of everything.
+- **A bare line, no ticks.** Pure magnitude estimation of a fraction, which is
+  what the longitudinal evidence in `research/iready-grade3.md` is actually
+  about — and the only family where the tolerance cannot be half a tick gap,
+  because there are no ticks. It needs a generous constant chosen by watching
+  him, which is the thing the half-gap rule was picked to avoid.
+
+Both are content plus one decision each, not new mechanics. Neither should land
+before there is a round of real play behind the six families that exist.
+
+## Weighting the target deck by error
+The stone he places worst would come up more often, exactly as the fact he
+answers slowest already does. Deferred, and the reason is the same one that has
+now been given three times: `_weights` in `domain/round.py` reads mean seconds
+against the level's pace, which means nothing for an estimate. Weighting by error
+is a *second* weighting function, and two reasons a deck is ordered is two
+mastery models. The data is being written either way — `Progress.targets` holds
+a `Tally` per exact fraction, right and wrong and time — so this stays possible
+without costing anything to defer. Note what it does *not* hold: the summed
+distance, the way `placements` does for football. A `Tally` is the type
+`attempts` already carries and reusing it cost nothing; recording error too
+means a second map keyed the same way, and it should be added when something is
+actually going to read it.
+
+## A parent-facing readout of estimation
+Sibling of the parent view of weak facts above, and it wants the same screen.
+Two sections now have data and no reader:
+
+- `placements` — football's aims, bucketed by decade of the field. The plot worth
+  drawing is *signed* error by bucket, not mean absolute error: the classic
+  finding is a logarithmic pattern, overestimating low on the line and
+  compressing high, and that is invisible in a mean and obvious in a plot. It is
+  also the only thing that would say whether the yard stripes are helping or
+  doing the estimating for him.
+- `targets` — curling's, per exact fraction, right and wrong. With four to
+  eighteen targets in a level this answers "which fractions does he miss", which
+  is far more actionable than a bucket. It is the section that would want the
+  summed error added above.
+
+## Rounding, as a second question over the same line
+`3.NBT.A.1`. Rounding is taught as a rule about the digit to the right, which
+leaves no magnitude understanding behind; on a line, *which ten is 47 nearer to*
+is the whole of it. Mechanically it is the placement already built, with a coarse
+tolerance and a different prompt. Deliberately held back rather than built beside
+the fractions: two question types arriving in one mechanic at once is how a
+placement mode grows a rule per question type, and the fraction line should be
+watched being played before anything else is hung off it.
+
+## The scaled pictograph scoreboard
+`3.MD.B.3` is scaled bar graphs and pictographs, where each symbol stands for 5
+or 10 and the skill is multiplying to read it. `draw_progress` already draws a
+row of pips and already divides — football's pip is ten yards. Drawing them with
+a key ("each ball = 5 yards") puts a Measurement & Data skill on a screen he
+looks at twenty times a round, costs one renderer change, and teaches nothing
+wrong if he ignores it. Not a mode, and it should not become one. This is the
+cheapest curricular contact in `research/iready-grade3.md` and it is unbuilt only
+because nothing has needed the scoreboard opened up yet.
+
+## Guess my rule
+A function machine: three rows shown, predict the fourth. It reuses the number
+pools, it is generalisation rather than drill, and it is the only idea on the
+list that produces a question he cannot answer by computing faster. It hooks
+grade 3 lesson 7 and grade 4 lesson 8. The cost is a new question shape — a
+machine row is not a `Fact` — which is the *same* cost as word problems and as
+true/false sentences. That is the argument for picking one of the three and
+letting it define the seam, rather than paying it three times.
+
+## The curriculum this program should not hold
+From `research/iready-grade3.md` §5.6, kept here so it is not re-proposed. Grade
+3 content that is real, is tested, and wants an interaction a keypad and a line
+do not have:
+
+- **Area and perimeter** (lessons 27–30). Genuinely important and genuinely
+  multiplicative. A rectangle-building interaction is a different program; worth
+  its own dig one day, not a variation on anything that exists.
+- **Geometry** (`3.G` entire) — attributes of shapes, quadrilaterals, dividing
+  shapes into equal areas. Faked on a keypad it becomes multiple-choice
+  vocabulary, which is the worst kind of drill.
+- **Mass, liquid volume, line plots.**
+- **Word problems**, one-step and two-step. The evidence is strong and the
+  content-authoring cost is real, but the honest objection is that a keypad game
+  with a two-line problem is a worksheet with sound effects. If it is ever built,
+  build it for *structure* — the same numbers with the unknown in the start
+  position — and not for reading.
+
+The general shape of the argument: two of i-Ready's four domains are covered
+here, and the other two are missing because the input device is a keypad and a
+line. Closing that gap means a new interaction, not a new cabinet.
 
 ## Packaging
 Currently `uv run mathr` from the source directory. A desktop entry, or a

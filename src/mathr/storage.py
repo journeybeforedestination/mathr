@@ -4,6 +4,12 @@ New fields are read through `.get` with defaults, so a file written by an
 earlier version still loads. `Fact.key` is unchanged and needs no bump for
 that reason; `version` is 2 because the *level* key changed shape, from
 `<level>` to `<mode>/<level>`, which is a different format.
+
+Four sections: `levels`, `facts`, `placements` and `targets`. The last two are
+both about placing a number on a line and are still kept apart, because
+`placements` is bucketed by decade of the line and sorted with `int()` — a
+fraction key in there raises inside `save`, which means `os.replace` never runs
+and the whole file quietly stops being written.
 """
 
 import json
@@ -40,6 +46,11 @@ class Progress:
     levels: Mapping[str, LevelRecord] = field(default_factory=dict)
     facts: Mapping[str, Tally] = field(default_factory=dict)
     placements: Mapping[str, Aim] = field(default_factory=dict)
+    #: Keyed by `Target.key` — `2/3|6`. Its own section rather than a corner of
+    #: `facts`: two key shapes in one map makes every later reader of the file
+    #: disambiguate them, and it costs one dict and no version bump to keep them
+    #: apart.
+    targets: Mapping[str, Tally] = field(default_factory=dict)
     settings: Settings = Settings()
 
     def level(self, mode_id: str, level_id: str) -> LevelRecord:
@@ -85,6 +96,15 @@ def load(path: Path) -> Progress:
                 str(key): Aim(attempts=int(value["attempts"]), error=float(value["error"]))
                 for key, value in raw.get("placements", {}).items()
             },
+            targets={
+                str(key): Tally(
+                    right=int(value["right"]),
+                    wrong=int(value["wrong"]),
+                    answered=int(value.get("answered", 0)),
+                    seconds=float(value.get("seconds", 0.0)),
+                )
+                for key, value in raw.get("targets", {}).items()
+            },
             settings=Settings(
                 sound=bool(settings.get("sound", True)),
                 timer=bool(settings.get("timer", True)),
@@ -126,6 +146,15 @@ def save(path: Path, progress: Progress) -> None:
             bucket: {"attempts": aim.attempts, "error": round(aim.error, 2)}
             for bucket, aim in sorted(progress.placements.items(), key=lambda item: int(item[0]))
         },
+        "targets": {
+            key: {
+                "right": tally.right,
+                "wrong": tally.wrong,
+                "answered": tally.answered,
+                "seconds": round(tally.seconds, 2),
+            }
+            for key, tally in sorted(progress.targets.items())
+        },
     }
     handle, temp = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     try:
@@ -162,10 +191,15 @@ def merge(progress: Progress, round: Round) -> Progress:
     Whatever he practised is worth recording even when he walks away
     mid-round; the per-fact tallies are the part that cannot be reconstructed.
     """
+    # Routed by what the mode asks, never by sniffing the shape of the key: a
+    # fraction row in `placements` raises inside `save` and stops the file being
+    # written at all, with nothing on screen to say so.
     facts = dict(progress.facts)
+    targets = dict(progress.targets)
+    into = targets if round.rules.targets_from_deck else facts
     for key, tally in round.attempts.items():
-        was = facts.get(key, Tally())
-        facts[key] = Tally(
+        was = into.get(key, Tally())
+        into[key] = Tally(
             right=was.right + tally.right,
             wrong=was.wrong + tally.wrong,
             answered=was.answered + tally.answered,
@@ -180,5 +214,9 @@ def merge(progress: Progress, round: Round) -> Progress:
     key = f"{round.mode_id}/{round.level_id}"
     levels = {**progress.levels, key: _fold(progress.level(round.mode_id, round.level_id), round)}
     return Progress(
-        levels=levels, facts=facts, placements=placements, settings=progress.settings
+        levels=levels,
+        facts=facts,
+        placements=placements,
+        targets=targets,
+        settings=progress.settings,
     )

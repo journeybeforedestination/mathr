@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
 
-from .facts import Item, Level, Sentence, sentences, shuffled
+from .facts import Item, Level, Sentence, sentences, shuffled, targets
 
 PARTS_TO_LAUNCH = 10
 RETRY_GAP = 3  # far enough that he must retrieve the fact, not echo it
@@ -67,6 +67,17 @@ PLACE_PENALTY = 10
 #: the marker has got to*, which is never twice the same.
 PLACE_DRAWS = 20
 
+#: A fraction placed on a partitioned line. The target is drawn from the *deck*
+#: rather than from the marker, which is what makes it an item like any other:
+#: a level can then say which fractions it asks, and the ticks under them are
+#: the denominator he is reading. A target derived from the marker the way a
+#: yard is would ask for `23/100` on a line ticked in sixths.
+#:
+#: `parts` therefore goes back to meaning what it means in the rocket — stones
+#: in the house, out of eight — rather than a position on the line.
+STONES = 8  # stones in an end
+STONE_LIVES = 3  # wide ones before the end is lost
+
 #: A fact is weighted by how long he takes on it, against the pace its level
 #: asks for. Clamped, because one 24-second stall on a 5-second fact would
 #: otherwise crowd the deck around a single bad morning.
@@ -119,6 +130,15 @@ class Rules:
     #: locks has sentences in them, and there is no useful mode that has either
     #: without the other.
     locks: tuple[int, ...] = ()
+    #: Where a placement's target comes from: the deck, or the marker.
+    #:
+    #: The placement is then the *question* — `queue[0]` names it — rather than
+    #: an offset added to wherever the marker has got to. That is the difference
+    #: between a mode whose level chooses what is asked and one whose previous
+    #: throws do, and it is also what makes `place` this mode's `apply`: it
+    #: advances the queue, writes the `Tally` and credits the part, because
+    #: nothing else will.
+    targets_from_deck: bool = False
     #: Does a wrong answer cost one of `lives`. Without it `lives` means only
     #: "empty-clock events survived" — `points` is incremented in `tick` and
     #: nowhere else — so a mode with lives and no clock has three of them that
@@ -158,6 +178,24 @@ CODE = Rules(
     LINES_TO_CRACK,
     locks=LOCKS,
     wrong_costs_life=True,
+)
+
+
+#: No clock, no keypad, and the placement is the whole question: eight stones,
+#: each a fraction to be put on a ticked line, three wide ones and the end is
+#: over. The three timing dials are dead here, as they are in `CODE` — a
+#: stopwatch on a deliberate estimate measures the stopwatch.
+CURLING = Rules(
+    0.0,
+    0.0,
+    0.0,
+    False,
+    False,
+    None,
+    STONES,
+    places=True,
+    place_lives=STONE_LIVES,
+    targets_from_deck=True,
 )
 
 
@@ -292,6 +330,11 @@ class Round:
             return None
         if self.pending is not None:
             return None  # one is already in the air
+        if self.rules.targets_from_deck:
+            # The question itself, before any of the machinery that walks a
+            # marker up a line: what is asked comes from the deck, so it is the
+            # level that decides it and not the throws that came before.
+            return self.current.value
         loss = self.sacked
         if loss is not None:
             # The one target that is *behind* the marker, and the one he is not
@@ -321,8 +364,14 @@ class Round:
 
         What makes a win farmable is having no way to lose, not having no clock
         — which is why `storage._fold` asks this rather than asking `timed`.
+        Three ways to lose now, and each arrived with a mode that had no other:
+        an empty clock, an alarm, and a placement thrown wide.
         """
-        return self.timed or self.rules.wrong_costs_life
+        return (
+            self.timed
+            or self.rules.wrong_costs_life
+            or self.rules.place_lives is not None
+        )
 
     @property
     def confirm_seconds(self) -> float:
@@ -401,40 +450,49 @@ def new_round(
         # Otherwise the last vault never swings, or the round is won partway
         # through a lock with lines still showing on the panel.
         raise ValueError("the locks must add up to the target")
-    if rules.places and rules.target != PLACE_MAX:
+    if rules.places and not rules.targets_from_deck and rules.target != PLACE_MAX:
         # The marker is the line. A shorter bar would quietly round every catch
         # down to the nearest part instead of spotting it where it was called.
+        # Only where the target is a function of the marker: a mode whose
+        # targets come from the deck counts stones, and the line it places them
+        # on is the item's own.
         raise ValueError("a placement mode must run the length of the line")
     # The whole pool stays in the deck and only its order is biased: a ten-part
     # round draws from the front, so ordering is selection, and no level can
     # ever empty itself into a "mastered" state the level screen would have to
     # show.
     # A judging mode's deck is sentences derived from the same pool, so every
-    # cabinet still leads to the same twelve level cards. They are not weighted:
-    # `_weights` reads a per-fact history, and a sentence is not a fact.
-    deck = (
-        sentences(level.facts, rng)
-        if rules.locks
-        else shuffled(level.facts, rng, _weights(level, history) if history else None)
-    )
+    # arithmetic cabinet still leads to the same level cards. They are not
+    # weighted: `_weights` reads a per-fact history, and a sentence is not a
+    # fact — nor is a fraction.
+    # A placing mode whose targets come from the deck is asking fractions, and
+    # they are not weighted either: `_weights` reads a per-fact history against
+    # a per-level pace, and a stone has neither.
+    if rules.targets_from_deck:
+        deck = targets(level.targets, rng)
+    elif rules.locks:
+        deck = sentences(level.facts, rng)
+    else:
+        deck = shuffled(level.facts, rng, _weights(level, history) if history else None)
     # Drawn here, never in a reducer: `tick`, `apply` and `place` take no rng,
     # and a round that cannot be replayed from its seed breaks the shuffle
     # tests in a way that reads as a shuffle bug. A mode without placements
     # draws nothing, so its consumption of the rng is exactly what it was.
+    walks = rules.places and not rules.targets_from_deck
     gains = (
         tuple(rng.choices(range(PLACE_GAIN_MIN, PLACE_GAIN_MAX + 1), k=PLACE_DRAWS))
-        if rules.places
+        if walks
         else ()
     )
     # What each play would cost and whether it is one are drawn apart, because
     # the halfway rule needs a yardage for a play the draw did not pick.
     sacks = (
         tuple(rng.randrange(SACK_MIN, SACK_MAX + 1) for _ in range(PLACE_DRAWS))
-        if rules.places
+        if walks
         else ()
     )
     sack_at = (
-        tuple(rng.random() < SACK_CHANCE for _ in range(PLACE_DRAWS)) if rules.places else ()
+        tuple(rng.random() < SACK_CHANCE for _ in range(PLACE_DRAWS)) if walks else ()
     )
     return Round(
         level_id=level.id,
@@ -491,7 +549,15 @@ def tick(round: Round, dt: float) -> tuple[Round, Outcome | None]:
     away by typing — a click that dismissed one would also be a throw, aimed
     wherever he happened to be reading.
     """
-    if round.over or round.hint is not None or round.placing is not None:
+    if round.over or round.hint is not None:
+        return round, None
+    if round.placing is not None and not round.rules.targets_from_deck:
+        # A called yard stops every clock, the way a hint does — the time spent
+        # aiming must not reach `Tally.seconds`, which is the deck weighting's
+        # input. Where the placement *is* the question there is always one due,
+        # so the same early return would stop the round's only clock forever and
+        # record every stone as having taken no time at all. Nothing weights
+        # that deck, so there is nothing to corrupt by letting it run.
         return round, None
 
     running = replace(
@@ -581,8 +647,13 @@ def dismiss(round: Round) -> Round:
 
 
 def place(round: Round, value: int) -> tuple[Round, Outcome]:
-    """Take the placement. A good one becomes a *claim*, not a gain.
+    """Take the placement. Two modes place, and they place differently.
 
+    Where the target came from the deck it is the *question*, thrown once, and
+    `_slide` below does the whole of it — including everything `apply` would
+    have done, because that mode never calls `apply`.
+
+    Where the marker named it, a good one becomes a *claim*, not a gain.
     It moves nothing yet: it goes to `pending`, and the next answer either
     confirms it (`apply` → SECURED, and the marker jumps to where it was
     called) or fails to before `pending_left` runs out (`tick` → LAPSED, and it
@@ -597,6 +668,8 @@ def place(round: Round, value: int) -> tuple[Round, Outcome]:
     called = round.placing
     if called is None:
         raise ValueError("no placement is pending")
+    if round.rules.targets_from_deck:
+        return _slide(round, value)
     error = abs(value - called)
     good = error <= PLACE_TOLERANCE
     lost = round.sacked
@@ -629,6 +702,55 @@ def place(round: Round, value: int) -> tuple[Round, Outcome]:
     if turnover:
         return taken, Outcome.LOST
     return taken, Outcome.PLACED if good else Outcome.ADRIFT
+
+
+def _slide(round: Round, value: int) -> tuple[Round, Outcome]:
+    """The stone, thrown once. This is the mode's `apply`, not its `place`.
+
+    A football placement comes straight back as another attempt from the same
+    spot, and the question under it is untouched because a *later answer* is
+    what confirms it. A stone is thrown once: wide or not, the next fraction
+    comes up. So this branch does what `apply` does everywhere else — advances
+    the queue, writes the `Tally`, credits the part — because in this mode
+    `apply` is never called. A fourth reducer would be three copies of that,
+    and they would drift the first time `Tally` changed.
+
+    No re-queue. A missed *fact* has to come back — retrieval, not echo — but
+    the ghost has just shown him the true mark, so re-asking the same fraction
+    three stones later is asking him to reproduce a picture he is looking at.
+
+    `on_current` is zeroed here for the same reason `apply` zeroes it: nothing
+    else does, and without it every stone after the first is recorded as having
+    taken the whole end.
+    """
+    target = round.current
+    good = abs(value - target.value) <= target.tolerance
+    adrift = round.adrift + (not good)
+    lives = round.rules.place_lives
+    lost = not good and lives is not None and adrift >= lives
+    parts = round.parts + good
+    won = parts >= round.rules.target
+    thrown = replace(
+        round,
+        queue=_advance(round),
+        parts=parts,
+        asked=round.asked + 1,
+        missed=round.missed + (not good),
+        attempts={
+            **round.attempts,
+            target.key: round.attempts.get(target.key, Tally()).record(good, round.on_current),
+        },
+        on_current=0.0,
+        adrift=adrift,
+        placed=round.placed + 1,
+        launched=won,
+        failed=lost,
+    )
+    if lost:
+        return thrown, Outcome.LOST
+    if won:
+        return thrown, Outcome.WON
+    return thrown, Outcome.PLACED if good else Outcome.ADRIFT
 
 
 def _take_the_loss(round: Round, spot: int, good: bool) -> tuple[Round, Outcome]:

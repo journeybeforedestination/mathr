@@ -2755,6 +2755,435 @@ line.
 ---
 
 
+## Curling: a fraction placed on a partitioned line
+
+A fifth cabinet, and the first mode with no keypad in it. He is shown a
+fraction, he clicks where it goes on a sheet of ice marked 0 to 1 and ticked
+into equal parts, and the stone slides to exactly where he clicked and stays
+there. Eight stones an end. A stone within half a tick gap of the true mark is
+in the house and counts; three wide ones end the round. There is no clock —
+estimation is deliberate, and a stopwatch on it measures the stopwatch. This is
+`3.NF.A.2` (locate `a/b` on a number line partitioned into `b` equal parts) and,
+in its second level family, `3.NF.A.3` equivalence: the line is ticked in sixths
+and the number called is `1/3`. See `research/iready-grade3.md` §5.1 for why this
+strand and not another; the short version is that it is the top item of grade 3's
+hardest unit and the number line beats the area model in the intervention
+evidence.
+
+### The load-bearing decision: the target is an *item*, not a position
+
+The obvious move is to reuse the football placement whole — set `rules.places`,
+let `Round.placing` name the target, let `place()` resolve the click. It is
+wrong, and the failure is arithmetic rather than taste.
+
+`Round.placing` (`domain/round.py:268`) derives its target from the marker:
+`min(PLACE_MAX - 1, parts + gains[placed % len(gains)])`, with `gains` drawn in
+`new_round` from `range(PLACE_GAIN_MIN, PLACE_GAIN_MAX + 1)`. Walk an end of
+curling on that machinery, on a level whose pool is thirds and sixths:
+
+1. Stone 1. Marker at 0, the drawn gain is 23. The target is 23 of 100. The
+   mode must now ask him to place **23/100** on a line ticked into sixths.
+   There is no tick there and the number is not in the level.
+2. He is near enough, so the marker moves to 23. Stone 2's gain is 31: the
+   target is 54/100. Still not a sixth, and now also not a third.
+3. By stone 5 the marker is past 80 and every remaining target is in the top
+   fifth of the line. `1/2` cannot be asked again this round at all — the
+   marker walked past it on stone 2 and `_secure` (`round.py:662`) uses `max`
+   precisely so nothing can walk it back.
+
+Three separate failures, and only the third one has a name in this repository
+(*a drive that never goes backwards is the one with least in it*). The first two
+are fatal: the number called is a function of the previous stones, so a level
+cannot control which fractions are asked, and the ticks drawn have nothing to do
+with the number called. `new_round`'s guard at `round.py:404` compounds it —
+`rules.places` requires `target == PLACE_MAX`, so the span could not be anything
+but 100, and 100 is not divisible by 3.
+
+The mode would compile, draw, and play — the stones would slide, the house would
+fill — while asking questions from outside its own level. The symptom is "the
+fractions are weird", which names nothing.
+
+So the target comes from the **deck**, not from the marker. That makes it an
+item, which the codebase already has a seam for: `Item = Question | Sentence`
+(`domain/facts.py:218`), where everything downstream of `Round.queue` touches
+only `.key`, `.prompt` and the route. It becomes
+`Item = Question | Sentence | Target`, and `parts` goes back to meaning what it
+means in the rocket — stones in the house, out of eight — rather than a position
+on the line.
+
+Everything below is downstream of that.
+
+### The load-bearing decision, second half: `place` becomes this mode's `apply`
+
+`apply` (`round.py:672`) is the only reducer that writes a `Tally`, and — apart
+from `tick`'s timeout path — the only one that advances the queue, via `_advance`
+(`round.py:463`). `place` (`round.py:583`) deliberately does neither: in football
+a wide throw comes straight back as another attempt from the same spot, and the
+question under it is untouched because a *later answer* is what confirms it.
+
+A curling stone is thrown once. Wide or not, the next fraction comes up. So
+`place` in this mode has to advance the queue, record the attempt against the
+item's key, and credit the part. That is not a shell concern and it is not a
+second `Round`: it is a branch in `place` on a rules dial, taken before the
+football path.
+
+The tempting alternative is a fourth reducer, `slide()`. Rejected: it would
+duplicate the tally write, the advance and the win check, and the three copies
+would drift the first time `RETRY_GAP` or `Tally` changes. One reducer, two
+branches, with the branch named for what the domain knows (the target came from
+the deck) and not for curling.
+
+### What a target is
+
+```python
+@dataclass(frozen=True)
+class Target:
+    num: int       # the numerator called
+    den: int       # its denominator
+    ticks: int     # how many equal parts the line is drawn in; a multiple of den
+```
+
+- **`ticks == den`** is the plain family: `2/3` on a line ticked in thirds.
+- **`ticks == k * den`** is equivalence: `1/3` on a line ticked in sixths, which
+  is grade 3 lessons 16–17 at no mechanical cost.
+
+Derived, all of it:
+
+- `value` — where it truly lies, in span units: `SPAN * num // den`.
+- `tolerance` — half a tick gap: `SPAN // (2 * ticks)`. Self-tuning, so halves
+  are forgiving and twelfths are tight, and no constant needs retuning per level.
+- `route` — a `Strategy` in **tick units**: `Strategy(0, (ticks // den,) * num)`.
+  `2/3` on thirds is two hops of one; `1/3` on sixths is one hop of two, which
+  is the equivalence said out loud. This is the same shape `12 ÷ 3` already
+  produces, so `draw.draw_number_line` (`draw.py:1323`) is the miss picture with
+  no new widget.
+- `prompt` — `"2/3"`. `key` — `"2/3|6"`, numerator, denominator and the
+  partition, because `1/3` on thirds and `1/3` on sixths are different questions
+  and must not share a row.
+- `answer` — **there is none.** A `Target` deliberately has no `.answer`
+  property. Anything that reaches for one is code that thinks this is typed, and
+  should fail loudly at the attribute rather than quietly comparing to `None`.
+
+**`SPAN = 240`, and the number is load-bearing.** Every denominator in scope
+(2, 3, 4, 5, 6, 8, 10, 12) must divide the span *and* leave an even quotient, or
+the half-tick-gap tolerance is not an integer and `place`, `Aim` and the click
+conversion all have to learn floats. 120 fails: `120 // 8 = 15`, half of which is
+7.5. 240 passes for every one of them. Verified by enumeration; re-run it before
+adding a denominator:
+
+```python
+[d for d in (2,3,4,5,6,8,10,12) if 240 % d or (240 // d) % 2]  # -> []
+```
+
+### What changes, file by file
+
+| File | Change |
+|---|---|
+| `src/mathr/domain/facts.py` | `Target`; `Item` gains it; `targets()` deck builder; four `_FRACTION` levels plus an equivalence family; a fractions `Everything` |
+| `src/mathr/domain/round.py` | `CURLING` rules; a dial for deck-drawn targets; `SPAN`, `STONES`, `STONE_LIVES`; `placing` branch; `place` branch that advances, tallies and credits; `losable` learns `place_lives`; `new_round` guard relaxed |
+| `src/mathr/storage.py` | a `targets` section beside `facts` and `placements`; `merge` folds `Round.attempts` for target keys into it |
+| `src/mathr/shell/draw.py` | `SHEET`, `draw_sheet`, `sheet_units`, `CURLING` `Layout`, `draw_rink` (cabinet art); `CABINETS` geometry |
+| `src/mathr/shell/audio.py` | two clips: `slide`, `inhouse` |
+| `src/mathr/shell/app.py` | `CURLING` mode, 3×2 `CABINETS`, per-mode level lists, `render_sheet`, `slide()` beside `throw()`, `render_play` dispatch entry |
+| `tests/test_curl.py` | new |
+| `tests/test_facts.py`, `test_storage.py`, `test_scaling.py` | additions named per step |
+| `README.md`, `CLAUDE.md`, `ideas.md` | named per step |
+
+### The steps
+
+Ordered so that every guard exists before the thing it guards, and so that the
+domain is complete and tested before a window is opened. Each step leaves the
+suite green and the game playable.
+
+**1. `Target` and the fraction pools** — `domain/facts.py`.
+Add `Target`, widen `Item`, add `targets(pool, rng, count)` (a flat shuffle; it
+must not go through `shuffled`, which returns `Question`s and whose rng
+consumption is pinned by two seeded tests). Add the level families:
+
+| id | name | pairs |
+|---|---|---|
+| `halves` | Halves & Fourths | `den` 2 and 4, `ticks == den` |
+| `thirds` | Thirds & Sixths | `den` 3 and 6, `ticks == den` |
+| `fifths` | Fifths & Tenths | `den` 5 and 10, `ticks == den` |
+| `eighths` | Eighths & Twelfths | `den` 8 and 12, `ticks == den` |
+| `same_as` | Same As | `den` 2/3/4 drawn on `ticks` 4/6/8/12 — equivalence |
+| `fractions` | Every Fraction | the concatenation, derived like `EVERYTHING` |
+
+Enumerated, never generated, exactly as the fact pools are. Exclude `0/b` and
+`b/b` from every pool: both are the labelled ends of the line, so they are free
+marks that measure nothing — the same reason `_divided` drops the zero pair.
+**Gate:** `uv run pytest`. **Tests:** pool sizes pinned per level and for the
+derived `fractions` total, the way `test_pool_sizes` (`tests/test_facts.py:47`)
+pins the fact pools; that `ticks % den == 0` for every target in every pool; that
+`tolerance` is an integer for every target in every pool; that `route` in tick
+units lands on `num` hops summing to `value`.
+**Falsifies:** `CLAUDE.md`'s pool-size list (`24 / 44 / 144 / …`) and its claim
+that `Round.queue` holds `Question | Sentence`.
+
+**2. The rules and the reducer** — `domain/round.py`.
+`SPAN = 240`, `STONES = 8`, `STONE_LIVES = 3`. Add the dial — one boolean on
+`Rules`, `targets_from_deck`, documented as *the placement is the question, not
+a function of the marker*. `CURLING = Rules(0.0, 0.0, 0.0, False, False, None,
+STONES, places=True, place_lives=STONE_LIVES, targets_from_deck=True)` — the
+three timing dials dead, as they are in `CODE` (`round.py:151`).
+- `placing` returns `round.current.value` when the dial is set, before any of the
+  gains/sack machinery, and still after the `over` and `hint` guards.
+- `place` branches first on the dial: no `pending`, no penalty, no sack. It
+  advances the queue (no re-queue — see traps), records
+  `attempts[target.key]` with `record(good, on_current)`, adds `good` to `parts`,
+  zeroes `on_current`, increments `adrift` on a wide one, and returns
+  `PLACED` / `ADRIFT`, or `WON` when `parts >= rules.target`, or `LOST` on the
+  `place_lives`th wide stone.
+- `losable` (`round.py:319`) becomes
+  `self.timed or self.rules.wrong_costs_life or self.rules.place_lives is not None`.
+  Without it a perfect end folds to `practice` forever and the level card never
+  shows a launch.
+- `new_round`'s guard at `round.py:404` becomes
+  `if rules.places and not rules.targets_from_deck and rules.target != PLACE_MAX`.
+  The guard must keep firing for football; add a test that it still does.
+- The deck comes from `targets(...)` when the dial is set, and draws no `gains`,
+  `sacks` or `sack_at` — so a curling round consumes the rng exactly as its own
+  shuffle does and nothing else.
+**Gate:** `uv run pytest`. **Tests:** `tests/test_curl.py` — an in-house stone
+scores and advances the queue; a wide one advances it too and scores nothing;
+three wide ones return `LOST` and set `failed`; eight in the house return `WON`;
+the tolerance is exactly half a tick gap at three denominators; `losable` is true
+for a curling round and still false for an untimed rocket round; `tick` never
+ends a curling round; the queue is never re-queued.
+**Falsifies:** `CLAUDE.md`'s *A round that cannot be lost must not touch
+`launches`* (it now asks a third thing) and the `Rules` dial list.
+
+**3. Storage** — `storage.py`.
+A `targets: Mapping[str, Tally]` section on `Progress`, read through `.get` with
+a default so a file written today still loads; `merge` routes a round's
+`attempts` into `facts` or `targets` by mode (`round.rules.targets_from_deck`),
+never by sniffing the key shape. **No `VERSION` bump** — `Fact.key` is unchanged
+and the level key is unchanged; this is a new section, which is exactly the case
+the module docstring says is additive.
+**Gate:** `uv run pytest`. **Tests:** round-trip with targets present; a file
+with no `targets` key loads as empty, beside
+`test_a_file_from_before_the_clock_still_loads` (`tests/test_storage.py:60`); a
+curling round's attempts land in `targets` and never in `facts`; a football
+round's `aims` still land in `placements`.
+**Falsifies:** the `storage.py` module docstring's list of sections, and
+`CLAUDE.md`'s storage line.
+
+**4. The sheet** — `shell/draw.py`.
+`SHEET` rect, `draw_sheet(surface, font, ticks, stones, called, ghost)` — the
+ice, the ticks, `0` and `1` labelled at the ends, the house drawn as rings
+centred on the called mark at the target's own tolerance radius, and every stone
+thrown so far. `sheet_units(position) -> int | None`, the sibling of
+`field_yards` (`draw.py:1005`), converting a design-space click to `0..SPAN` and
+returning `None` off the sheet, vertically generous for the same reason. A
+`CURLING` `Layout` (`draw.py:1218`) — there is no entry box, so `entry` is a
+zero rect and `hint` takes the sheet's own area.
+**Gate:** `uv run pytest`. **Tests:** in `tests/test_scaling.py` — `sheet_units`
+maps the two ends to 0 and `SPAN`, is monotone across the sheet, and returns
+`None` above and below it; the house radius shrinks as `ticks` grows.
+
+**5. The cabinet grid** — `shell/app.py`, `shell/draw.py`.
+`CABINETS` (`app.py:190`) becomes three across by two down: six slots, five
+modes and one `"soon"`. Widths go 400 → 368 with 44 of gap
+(`44 + 368 + 44 + 368 + 44 + 368 + 44 == 1280`); **height stays 220**, so
+`cabinet_parts` (`draw.py:517`) and the test pinning `h = 440` unchanged are
+untouched. The `"soon"` guards are already in `click` (`app.py:402`) and
+`draw_card` (`draw.py:217`) — verify both still skip it after the grid changes.
+This lands before the mode so the grid is proven with a dimmed slot rather than
+with a half-built cabinet in it.
+**Gate:** `uv run mathr` — the arcade shows six slots, the sixth is dim, dead
+and does not hover. **Falsifies:** `CLAUDE.md`'s *the 2x2 grid is full* and
+*Two rows of two, and now full* at `app.py:187`.
+
+**6. Per-mode level lists** — `shell/app.py`.
+`Mode` (`app.py:63`) gains `levels: tuple[tuple[str, ...], ...]` and
+`titles: tuple[str, ...]`; the level screen builds its buttons from the current
+mode instead of the module-level `LEVEL_COLUMNS` (`app.py:210`) and
+`COLUMN_TITLES` (`app.py:208`). The four existing modes carry today's four
+columns verbatim, so nothing about them changes. `fail_action`'s
+`LEVELS[0].id` fallback (`app.py:472`) must become the current mode's first
+level, or *Try again* on a curling failure starts a rocket level.
+This lands before the mode because a curling cabinet with the arithmetic level
+screen behind it is a wrong game one click deep.
+**Gate:** `uv run pytest`, then `uv run mathr` — each of the four cabinets still
+shows its twelve cards.
+**Falsifies:** `CLAUDE.md`'s *every cabinet still leads to the same twelve level
+cards* and the comment at `round.py:412`.
+
+**7. The mode** — `shell/app.py`, `shell/audio.py`.
+`Play` gains `stones: list[tuple[int, bool]]` (where each landed, and whether it
+counted) and `ghost: tuple[int, int] | None` (aimed, called) for the held miss.
+`slide(position)` beside `throw` (`app.py:579`): convert with `sheet_units`,
+call `place`, append the stone, hold the miss. `click` (`app.py:399`) routes to
+it on the dial rather than on `self.mode`. `render_sheet` joins the
+`render_play` dispatch (`app.py:796`) — a dict entry, never an `if`. `start`
+(`app.py:477`) sets `timed=False` for this mode alongside the `locks` case.
+Clips: `slide` and `inhouse`.
+**Gate:** `uv run mathr`, and see the section below for what to look at.
+**Falsifies:** `CLAUDE.md`'s mode list, `render_play` note and *Making the two
+likely changes*.
+
+**8. The documentation.** `README.md` gains the mode; `CLAUDE.md` gains the map
+entries, the tuning rows (`SPAN`, `STONES`, `STONE_LIVES`, `SENTENCE_DECK`'s
+sibling for the target deck size) and every invariant from the traps below;
+`ideas.md` takes the deferred work named at the end of this section. Last,
+because the earlier steps each falsify a piece of it and doing this once is
+cheaper than eight times.
+
+### Traps
+
+**A wide stone must not be re-queued.** `_advance(round, retry)`
+(`round.py:463`) exists because a missed *fact* has to come back — retrieval,
+not echo. A missed *estimate* is different: the ghost has just shown him the true
+mark, so re-asking the same fraction three throws later is asking him to
+reproduce a picture he is still looking at, and the deck weighting is not there
+to fix it either. Pass no `retry`. Symptom otherwise: the end fills up with the
+one fraction he got wrong first, and it reads as the shuffle being broken.
+
+**`place` must zero `on_current`.** It is `apply` that does this today
+(`round.py:685`), and in this mode `apply` is never called. Miss it and
+`on_current` accumulates across the whole end, so the last stone is recorded as
+having taken ninety seconds. Nothing raises; the number is simply a lie, and it
+is a lie in the record that a parent view would read.
+
+**Target rows must not go into `placements`.** `save` sorts that section with
+`key=lambda item: int(item[0])` (`storage.py:127`) — it is keyed by decade of the
+line. A key of `"2/3|6"` raises `ValueError` *inside `save`*, so the
+`os.replace` never happens and **the whole file silently stops being written**;
+`load` swallows nothing here because nothing was written. The symptom is progress
+that stops accumulating with no error on screen. This is why targets get their
+own section, and it is a second reason (beyond the bucket collision with
+football's yards) not to reuse `aims`.
+
+**`Target` has no `.answer`, and that is deliberate.** `apply` compares
+`given == question.answer`. If `Target` grows an `answer` property for symmetry,
+a stray keypad path in a future mode compares a typed integer against a span
+value and marks `160` correct for `2/3`. Leave the attribute absent so that path
+raises.
+
+**The Timer toggle is dead here**, as it is in Code Breaker. `start`
+(`app.py:477`) must force `timed=False`; a curling round built with a clock has
+`seconds_left` draining under a mode with nothing to spend it on, and `tick`
+would end a round nothing is watching.
+
+**A click on the sheet must not dismiss the held miss.** The same rule the field
+already has: `review` is cleared by a button, never by a click on the play area,
+or reading the ghost throws the next stone at whatever tick he was reading.
+`press` clears it too, so the keyboard is not dead in front of it — and `press`
+must otherwise return early for this mode entirely, since there is nothing to
+type.
+
+**The house is drawn at the target's own tolerance.** Not at a constant. A fixed
+ring under a half-tick-gap rule tells him he is in when he is out; the ring
+shrinking as denominators grow is also the only thing on screen that says the
+shot got harder.
+
+**`0/b` and `b/b` are not questions.** Both are the labelled ends of the line.
+Left in the pool they are free marks that measure nothing and inflate the record
+— the same failure `_divided` avoids by drawing from `range(1, 11)`.
+
+**A denominator added later must be re-checked against `SPAN`.** Sevenths and
+ninths divide neither 240 nor any span with an even quotient for the whole
+existing set; adding one means moving the span *and* re-deriving every
+tolerance. Run the enumeration above before adding a level.
+
+### Considered and rejected
+
+- **Reuse football's placement whole.** The load-bearing decision above: the
+  target would be a function of the marker, so a level could not control which
+  fractions it asks.
+- **A fourth reducer, `slide()`.** Duplicates the tally write, the advance and
+  the win check; three copies that drift the first time `Tally` changes.
+- **A power meter — aim plus weight, as in real curling.** Makes the error partly
+  motor, which corrupts the one measurement this mode exists to take. The click
+  is the estimate and the stone lands exactly there.
+- **A pie or bar splitting into `b` parts on a miss.** The area model. The
+  intervention evidence in `research/iready-grade3.md` §5.1 is specifically for
+  the number line *over* it, and two representations for one idea is worse than
+  either alone.
+- **A shot clock per stone.** Cheap, and it would give the mode the tension the
+  others get from a clock. Rejected because a stopwatch on a deliberate estimate
+  measures the stopwatch; the stones accumulating on the ice are what carries the
+  round instead.
+- **Weighting the deck by estimation error.** `_weights` (`round.py:363`) reads
+  mean seconds against the level's pace, which means nothing for a stone. A
+  second weighting function is a second mastery model, which `ideas.md` has now
+  refused three times. Recorded in `ideas.md`.
+- **A fixed tolerance, like `PLACE_TOLERANCE`.** No single number is right for
+  both halves and twelfths.
+- **My own wrong turn, worth recording.** I first proposed spanning the line in
+  **120** units and asserted the denominators all divided it. They do not:
+  `120 // 8 = 15`, so an eighths line has a half-tick gap of 7.5 and the
+  tolerance stops being an integer — which would have pushed `place`, `Aim` and
+  the click conversion into floats for one denominator, and the failure would
+  have shown up as eighths being inexplicably harder than twelfths. Enumerating
+  the divisors instead of trusting the round number is what found it. 240.
+- **My second wrong turn.** I initially recommended per-target rows go into the
+  existing `facts` map, since a `Tally` is a `Tally`. The `int()` sort in `save`
+  is a hazard in the same family, and mixing two key shapes in one section makes
+  every future reader of that file disambiguate them. A separate section costs
+  one dict and no version bump.
+
+### Accepted with known risk
+
+- **The house moves every stone.** In real curling it does not; the house is
+  fixed and the *throw* varies. This is target practice on ice wearing curling's
+  clothes. Taken knowingly: the accumulating stones and the rings-as-tolerance
+  are worth more than the fidelity. **Revisit trigger:** if he says it is not
+  curling, or a real game confuses him — the same test the football/field-goal
+  argument was decided on.
+- **Eight stones can crowd.** Two targets that land near each other put two
+  stones nearly on top of each other, and at twelfths the marks are ten span
+  units apart. **Revisit trigger:** if stones become hard to tell apart on the
+  ice; the fix is stacking them in rows above the line, not shrinking them.
+  *Fired on the first play-through, and the named fix is what was built:*
+  `stone_rows` in `shell/draw.py`. `halves` guarantees it — `1/2` and `2/4` are
+  the same mark, and a deck of four over eight stones puts up to four on it.
+- **Both level families ship together.** The equivalence family (`same_as`) is
+  strictly harder than the four plain ones and its tolerance is the one most
+  likely to need re-arguing. **Revisit trigger:** if the `same_as` record shows a
+  wide-stone rate unlike the other five, treat its tolerance — not his
+  understanding — as the first suspect.
+
+### Environment and coverage notes
+
+- The suite does not open a window. Three things can only be checked by a human
+  at `uv run mathr`, and step 7's gate is all three: that a click on the sheet
+  lands on the tick it looks like it lands on **at several window sizes,
+  including a tall narrow Hyprland tile**; that the two new clips are audible
+  through PipeWire; and whether half a tick gap is the right bar for him at
+  eighths and twelfths.
+- `pytest` and `ruff` are not installed system-wide; they arrive through `uv`.
+- One runtime dependency, `pygame-ce`. This adds none.
+- The user creates commits and anything on GitHub. Do not commit or push
+  without asking.
+
+### What was read, and what was not
+
+Read closely for this plan: all of `domain/round.py`, all of `storage.py`,
+`domain/facts.py` in full, and the parts of `shell/app.py` named by line above
+(`Mode`, `MODES`, `CABINETS`, the level-screen constants, `Play`, `click`,
+`start`, `press`, `throw`, `lose`, `render_play`). **Not read:** `shell/draw.py`
+except the dozen symbols cited — in particular `draw_field`, `draw_number_line`
+and `draw_progress` were read only at their docstrings, so step 4 should open
+`draw_field` (`draw.py:1024`) in full before writing `draw_sheet`; it is the
+closest sibling and the tick-drawing and label placement are likely to be
+liftable. `shell/audio.py` and the existing tests were not read at all beyond
+their names — step 1 should open `tests/test_facts.py` and step 2
+`tests/test_place.py` before writing new ones.
+
+### Out of scope, and where it went
+
+Recorded in `ideas.md`, not built here: fractions past one on a 0–2 line and
+mixed numbers; a bare unticked line as the hardest family; weighting the target
+deck by estimation error; the parent-facing readout of both `placements` and
+`targets`; rounding to the nearest ten as a second question type over the same
+mechanic; the scaled pictograph scoreboard; *Guess my rule*; the rest of the
+times tables; two-digit addition; and the grade-3 strands this program should
+not pretend to hold — area and perimeter, mass, liquid volume, line plots and
+geometry. `research/iready-grade3.md` is the argument behind each.
+
+---
+
 ## Traps
 
 **Mouse coordinates must be inverse-mapped through the design-surface scale.**

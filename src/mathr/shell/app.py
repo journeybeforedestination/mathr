@@ -7,10 +7,12 @@ from typing import Mapping
 
 import pygame
 
-from ..domain.facts import LEVELS, LEVELS_BY_ID
+from ..domain.facts import LEVELS_BY_ID
+from ..domain.facts import SPAN
 from ..domain.round import (
     ALARMS,
     CODE,
+    CURLING,
     FOOTBALL,
     PLACE_MAX,
     PLACE_TOLERANCE,
@@ -51,12 +53,93 @@ VERDICTS = {
     Outcome.SETBACK: ("RIGHT SPOT", draw.GOOD, "the ball is on the {units}"),
 }
 
-NEXT_PASS = Button(pygame.Rect(510, 716, 260, 76), "Next pass", "next", draw.PANEL)
+#: The one way out of a panel that is being read: a click on the play area must
+#: never double as a dismissal, or reading the miss throws the next one at
+#: whatever the eye happened to be resting on. Its label is per mode.
+NEXT_UP = Button(pygame.Rect(510, 716, 260, 76), "Next", "next", draw.PANEL)
 
 #: The call. Two buttons and no keypad: the keypad below is for the repair that
 #: only a correct overturn opens, and a keystroke must never stand in for one of
 #: these — see `press`.
 ROCKET_HEART = (draw.ROCKET_ORIGIN[0] + draw.BODY_X, draw.ROCKET_ORIGIN[1] + 300)
+
+
+# --- the level screen -------------------------------------------------------
+# Four columns rather than a list: a fourth level would run the old single
+# column off the bottom of the 800-tall design surface.
+COLUMN_X = tuple(64 + index * 294 for index in range(4))
+ROW_Y = (216, 356, 496)
+CARD = (270, 120)
+
+
+@dataclass(frozen=True)
+class LevelScreen:
+    """The cards one cabinet leads to.
+
+    Four cabinets share one screen because they ask the same questions in
+    different clothes. The fifth asks a different *kind* of question, and a
+    curling cabinet with the arithmetic cards behind it is a wrong game one
+    click deep — so this is a field of `Mode` with no default, the way the
+    renderer dispatch is a dict with no fallthrough.
+    """
+
+    titles: tuple[str, ...]
+    cards: tuple[Button, ...]
+    #: Drawn, never clickable — see `draw.draw_card`, which will not hover these.
+    soon: tuple[Button, ...] = ()
+
+    @property
+    def first(self) -> str:
+        """Where *Try again* goes when there is no round left to ask."""
+        return self.cards[0].value
+
+
+def level_screen(columns, titles, tall: str | None = None, soon: str | None = None) -> LevelScreen:
+    """Columns of level ids, plus one double-height card in the column after
+    them — which is always the level that is every other level at once."""
+    cards = tuple(
+        Button(
+            pygame.Rect(COLUMN_X[column], ROW_Y[row], *CARD),
+            LEVELS_BY_ID[level_id].name,
+            level_id,
+        )
+        for column, ids in enumerate(columns)
+        for row, level_id in enumerate(ids)
+    )
+    if tall is not None:
+        cards += (
+            Button(
+                pygame.Rect(COLUMN_X[len(columns)], ROW_Y[0], CARD[0], 260),
+                LEVELS_BY_ID[tall].name,
+                tall,
+            ),
+        )
+    dark = (
+        (Button(pygame.Rect(COLUMN_X[len(columns)], ROW_Y[2], *CARD), soon, "soon"),)
+        if soon is not None
+        else ()
+    )
+    return LevelScreen(titles, cards, dark)
+
+
+ARITHMETIC = level_screen(
+    (
+        ("fives", "tens", "bridge"),
+        ("twos", "fives_times", "tens_times"),
+        ("divide_two", "divide_five", "divide_ten"),
+    ),
+    ("Addition", "Multiply", "Division", "Everything"),
+    tall="everything",
+    soon="Tricky Facts",
+)
+
+FRACTIONS = level_screen(
+    (("halves", "thirds"), ("fifths", "eighths"), ("same_as",)),
+    # The column says the idea, the card says it in his words: the fifth level
+    # is the only one where the ticks are not the denominator.
+    ("Start Here", "Trickier", "Equivalent", "Everything"),
+    tall="fractions",
+)
 
 
 @dataclass(frozen=True)
@@ -78,6 +161,7 @@ class Mode:
     rules: Rules
     clips: Mapping[Outcome, str]
     layout: draw.Layout  # where the prompt, the entry box and a hint go
+    levels: LevelScreen  # and which cards the cabinet leads to
     noun: str
     per_part: int  # what one part is worth, in `noun`
     won: str
@@ -104,6 +188,7 @@ MODES = {
             Outcome.LOST: "abducted",
         },
         draw.CLASSIC,
+        ARITHMETIC,
         "parts",
         1,
         "BLAST OFF!",
@@ -125,6 +210,7 @@ MODES = {
             Outcome.LOST: "drop",
         },
         draw.CLASSIC,
+        ARITHMETIC,
         "returns",
         1,
         "YOU WIN!",
@@ -150,6 +236,7 @@ MODES = {
             Outcome.LOST: "abducted",
         },
         draw.DOWNFIELD,
+        ARITHMETIC,
         "yards",
         1,  # the marker is the line: a part is a yard, and a catch spots it exactly
         "TOUCHDOWN!",
@@ -171,6 +258,7 @@ MODES = {
             Outcome.LOST: "alarm",
         },
         draw.CODEBREAK,
+        ARITHMETIC,
         "lines",
         1,
         "VAULT OPEN!",
@@ -180,18 +268,45 @@ MODES = {
         0.9,
         prompt_font="mid",
     ),
+    "curling": Mode(
+        "curling",
+        "Curling Club",
+        CURLING,
+        {
+            Outcome.PLACED: "inhouse",
+            Outcome.ADRIFT: "slide",
+            Outcome.WON: "cheer",
+            Outcome.LOST: "drop",
+        },
+        draw.ONICE,
+        FRACTIONS,
+        "stones",
+        1,
+        "GREAT END!",
+        "OUT OF STONES",
+        "you had {units} in the house",
+        2.8,
+        0.7,
+    ),
 }
 
 BACK = Button(pygame.Rect(40, 40, 150, 64), "Back", "back")
 
-#: Two rows of two, and now full. Nothing is dimmed today, but the `"soon"`
-#: guards stay: `click` skips that id and `draw_card` will not hover it, which
-#: is what a fifth placeholder would need again.
+#: Three across by two down: five cabinets and one still dark. The `"soon"`
+#: guards are what keep that last slot honest — `click` skips the id and
+#: `draw_card` will not hover it, and without them the click would set a mode
+#: that does not exist and `App.game` would raise on the next frame.
+#:
+#: The height is deliberately still 220: `draw.cabinet_parts` scales its offsets
+#: by the height they were drawn against, and a test pins that 440 is unchanged.
+#: Only the width moved — 44 + 3 x 368 + 3 x 44 spans the design surface exactly.
 CABINETS = (
-    ("rocket", pygame.Rect(160, 186, 400, 220)),
-    ("tennis", pygame.Rect(720, 186, 400, 220)),
-    ("football", pygame.Rect(160, 420, 400, 220)),
-    ("code", pygame.Rect(720, 420, 400, 220)),
+    ("rocket", pygame.Rect(44, 186, 368, 220)),
+    ("tennis", pygame.Rect(456, 186, 368, 220)),
+    ("football", pygame.Rect(868, 186, 368, 220)),
+    ("code", pygame.Rect(44, 420, 368, 220)),
+    ("curling", pygame.Rect(456, 420, 368, 220)),
+    ("soon", pygame.Rect(868, 420, 368, 220)),
 )
 
 MENU_BUTTONS = (
@@ -199,34 +314,6 @@ MENU_BUTTONS = (
     Button(pygame.Rect(500, 666, 280, 76), "Timer: On", "timer"),
     Button(pygame.Rect(810, 666, 280, 76), "Quit", "quit"),
 )
-
-# Four columns rather than a list: a fourth level would run the old single
-# column off the bottom of the 800-tall design surface.
-COLUMN_X = tuple(64 + index * 294 for index in range(4))
-ROW_Y = (216, 356, 496)
-CARD = (270, 120)
-COLUMN_TITLES = ("Addition", "Multiply", "Division", "Everything")
-
-LEVEL_COLUMNS = (
-    ("fives", "tens", "bridge"),
-    ("twos", "fives_times", "tens_times"),
-    ("divide_two", "divide_five", "divide_ten"),
-)
-
-LEVEL_BUTTONS = tuple(
-    Button(pygame.Rect(COLUMN_X[column], ROW_Y[row], *CARD), LEVELS_BY_ID[level_id].name, level_id)
-    for column, ids in enumerate(LEVEL_COLUMNS)
-    for row, level_id in enumerate(ids)
-) + (
-    Button(
-        pygame.Rect(COLUMN_X[3], ROW_Y[0], CARD[0], 260),
-        LEVELS_BY_ID["everything"].name,
-        "everything",
-    ),
-)
-
-#: Drawn, never clickable — see `draw.draw_card`, which will not hover these.
-SOON_BUTTONS = (Button(pygame.Rect(COLUMN_X[3], ROW_Y[2], *CARD), "Tricky Facts", "soon"),)
 
 FAIL_BUTTONS = (
     Button(pygame.Rect(660, 500, 260, 92), "Try again", "retry", draw.PANEL),
@@ -293,6 +380,11 @@ class Play:
     jump: tuple[int, int] | None = None  # a sack, drawn as a hop back down the line
     review: tuple[int, int, bool] | None = None  # a miss being explained; last is "was a sack"
     opened: tuple = ()  # the lines of a lock that has just swung, while it is shown
+    stones: list[tuple[int, bool]] = field(default_factory=list)  # where each landed, and whether it counted
+    #: A wide stone being read: the target it was thrown at, and where it went.
+    #: The *target* and not just the numbers, because the queue has already moved
+    #: on and the sheet has to keep the partition of the question he is reading.
+    ghost: tuple | None = None
 
 
 def hint_caption(question) -> str | None:
@@ -408,7 +500,7 @@ class App:
         elif self.screen == "levels":
             if BACK.rect.collidepoint(position):
                 self.back()
-            for button in LEVEL_BUTTONS:
+            for button in self.game.levels.cards:
                 if button.rect.collidepoint(position):
                     self.start(button.value)
         elif self.screen == "play":
@@ -418,11 +510,17 @@ class App:
                 for button in FAIL_BUTTONS:
                     if button.rect.collidepoint(position):
                         self.fail_action(button.value)
-            elif self.play is not None and self.play.review is not None:
-                if NEXT_PASS.rect.collidepoint(position):
+            elif self.play is not None and (
+                self.play.review is not None or self.play.ghost is not None
+            ):
+                if NEXT_UP.rect.collidepoint(position):
                     self.play.review = None
+                    self.play.ghost = None
             elif self.play is not None and self.play.round.placing is not None:
-                self.throw(position)
+                if self.game.rules.targets_from_deck:
+                    self.slide(position)
+                else:
+                    self.throw(position)
             else:
                 for button in KEYPAD:
                     if button.rect.collidepoint(position):
@@ -452,7 +550,9 @@ class App:
             self.running = False
 
     def fail_action(self, value: str) -> None:
-        level_id = self.play.round.level_id if self.play else LEVELS[0].id
+        # This mode's first level, never the module's: *Try again* on a curling
+        # failure must not start a rocket level.
+        level_id = self.play.round.level_id if self.play else self.game.levels.first
         self.play = None
         if value == "retry":
             self.start(level_id)
@@ -479,8 +579,11 @@ class App:
         # The Timer toggle belongs to the rocket. A rally has no untimed form —
         # without a deadline the ball has nowhere to be — and the booth is the
         # other way round: what it measures is reasoning faster than his own
-        # arithmetic, and a clock suppresses the thing being measured.
-        if mode.rules.locks:
+        # arithmetic, and a clock suppresses the thing being measured. The ice
+        # is the booth's case again, and a clock there would drain against a
+        # mode with nothing to spend it on until `tick` ended a round nobody was
+        # racing.
+        if mode.rules.locks or mode.rules.targets_from_deck:
             timed = False
         elif mode.rules.lives is not None:
             timed = True
@@ -509,10 +612,11 @@ class App:
         play = self.play
         if play is None or play.round.over:
             return
-        if play.review is not None:
-            # Nothing to type against, so any key means "next pass" — the
-            # keyboard must not be the one way out of a screen that has a button.
+        if play.review is not None or play.ghost is not None:
+            # Nothing to type against, so any key means "next" — the keyboard
+            # must not be the one way out of a screen that has a button.
             play.review = None
+            play.ghost = None
             return
         if play.round.placing is not None:
             # The click *is* the estimate. A key that resolved or dismissed a
@@ -604,6 +708,35 @@ class App:
             return
         if outcome is Outcome.ADRIFT:
             play.review = (aimed, called, was_sack)
+        self.sounds.play(self.game.clips[outcome])
+
+    def slide(self, position: tuple[int, int]) -> None:
+        """A click on the ice, resolved as the stone.
+
+        One stone, thrown once: `place` advances the queue itself in this mode,
+        so there is nothing here to hold the question open for.
+        """
+        play = self.play
+        if play.ghost is not None:
+            return  # the last stone is still being read; this click is not aimed
+        target = play.round.current
+        aimed = draw.sheet_units(position, SPAN)
+        if aimed is None:
+            return
+        before = play.round.parts
+        play.round, outcome = place(play.round, aimed)
+        play.stones.append((aimed, play.round.parts > before))
+        play.flash = outcome
+        play.flash_left = FLASH_TIME
+        if outcome is Outcome.LOST:
+            # The third wide stone: `lose` owns the failure screen and its clip.
+            self.lose()
+            return
+        if outcome is Outcome.ADRIFT:
+            play.ghost = (target, aimed)
+        if outcome is Outcome.WON:
+            play.since_launch = 0.0
+            self.record()
         self.sounds.play(self.game.clips[outcome])
 
     def ball(self, play: Play) -> tuple[float, float]:
@@ -755,6 +888,8 @@ class App:
                 draw.draw_gridiron(self.canvas, screen, self.clock_now)
             elif mode_id == "code":
                 draw.draw_mini_vault(self.canvas, screen, self.clock_now)
+            elif mode_id == "curling":
+                draw.draw_rink(self.canvas, screen, self.clock_now)
         labels = {
             "sound": f"Sound: {'On' if self.progress.settings.sound else 'Off'}",
             "timer": f"Timer: {'On' if self.progress.settings.timer else 'Off'}",
@@ -765,13 +900,14 @@ class App:
     def render_levels(self) -> None:
         draw.text(self.canvas, self.fonts["big"], self.game.title, (640, 116), draw.INK)
         self.button(BACK)
-        for index, title in enumerate(COLUMN_TITLES):
+        screen = self.game.levels
+        for index, title in enumerate(screen.titles):
             draw.text(
                 self.canvas, self.fonts["mid"], title, (COLUMN_X[index] + CARD[0] // 2, 176), draw.ACCENT
             )
-        for button in SOON_BUTTONS:
+        for button in screen.soon:
             draw.draw_button(self.canvas, self.fonts["small"], button, False, dimmed=True)
-        for button in LEVEL_BUTTONS:
+        for button in screen.cards:
             self.level_card(button)
 
     def level_card(self, button: Button) -> None:
@@ -798,6 +934,7 @@ class App:
             "tennis": self.render_court,
             "football": self.render_field,
             "code": self.render_code,
+            "curling": self.render_sheet,
         }[self.mode](play)
 
         self.button(BACK)
@@ -917,6 +1054,61 @@ class App:
                 self.clock_now,
             )
 
+    def render_sheet(self, play: Play) -> None:
+        round_ = play.round
+        # While a miss is being read, the sheet keeps the partition of the
+        # question he is reading — the queue has already moved on, and redrawing
+        # the ticks in the next fraction's denominator under his stone would
+        # explain the wrong question.
+        target = play.ghost[0] if play.ghost else None if round_.over else round_.current
+        draw.draw_sheet(
+            self.canvas,
+            self.fonts["small"],
+            SPAN,
+            target,
+            play.stones,
+            play.ghost[1] if play.ghost else None,
+            self.clock_now,
+        )
+        if round_.rules.place_lives is not None:
+            draw.draw_attempts(
+                self.canvas, self.fonts["tiny"], round_.adrift, round_.rules.place_lives
+            )
+        if play.ghost is not None:
+            self.render_ghost(play)
+        elif not round_.over:
+            draw.draw_stone_call(self.canvas, self.fonts["huge"], self.fonts["small"], target)
+
+    def render_ghost(self, play: Play) -> None:
+        """A wide stone, held until he says he has read it.
+
+        Self-paced and it costs him nothing: a placement is due, so nothing is
+        running — the same bargain the football miss makes. The button is what
+        makes it safe, and `press` clears it so the keyboard is not dead in
+        front of a screen the mouse can leave.
+        """
+        target, aimed = play.ghost
+        hops = target.num * (target.ticks // target.den)
+        draw.text(self.canvas, self.fonts["big"], "WIDE", (640, 470), draw.BAD)
+        draw.text(
+            self.canvas,
+            self.fonts["small"],
+            f"your stone is {'short of' if aimed < target.value else 'past'} {target.prompt}",
+            (640, 524),
+            draw.DIM,
+        )
+        # The count, said out loud, because it is the whole of the lesson where
+        # the partition is not the denominator: 1/3 is two ticks of six.
+        draw.text(
+            self.canvas,
+            self.fonts["small"],
+            f"{target.prompt} is {hops} tick{'' if hops == 1 else 's'} along"
+            f" a line cut into {target.ticks}",
+            (640, 566),
+            draw.ACCENT,
+        )
+        self.button(NEXT_UP, "Next stone")
+
     def render_miss(self, play: Play) -> None:
         """A miss, held until he says he has read it.
 
@@ -965,7 +1157,7 @@ class App:
                 (640, 692),
                 draw.BAD,
             )
-        self.button(NEXT_PASS)
+        self.button(NEXT_UP, "Next pass")
 
     @staticmethod
     def miss_line(aimed: int, called: int, was_sack: bool = False) -> str:

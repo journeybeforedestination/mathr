@@ -33,13 +33,15 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
   three readings of `Rules`; Code Breaker is not. It could run on `ROCKET`'s
   rules unchanged and still be a different game, because a `Sentence` is not a
   `Fact`.
-  That is why `Round.queue` holds `Item = Question | Sentence` — everything
-  downstream of it touches only `.key`, `.prompt`, `.answer` and the route, so
-  one queue serves both. A *parallel* deck beside the queue is the trap: `tick`
+  That is why `Round.queue` holds `Item = Question | Sentence | Target` —
+  everything downstream of it touches only `.key`, `.prompt` and the route, so
+  one queue serves all three. `Target` is the one with no `.answer`, which is
+  why `apply` is not the reducer that resolves it. A *parallel* deck beside the queue is the trap: `tick`
   charges `on_current` to `queue[0]`, so the time he spends on a sentence lands
   in `Tally.seconds` for a fact he was never asked, and the symptom is bad deck
   ordering **in a different cabinet**.
-- **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`, `FOOTBALL`)
+- **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`, `FOOTBALL`,
+  `CODE`, `CURLING`)
   says what the clock does, what a wrong answer costs, what an empty clock
   means, and whether the round stops every so often to ask for a placement.
   Tennis built as a pure renderer over `ROCKET` compiles, draws, and plays as a
@@ -60,16 +62,19 @@ src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
     facts.py      Fact, Question, Strategy, Level, the ten enumerated pools,
-                  Side / Sentence / sentences: the code panel's derived deck
+                  Side / Sentence / sentences: the code panel's derived deck,
+                  SPAN / Target / targets and the six fraction pools
     round.py      Round, Rules, Tally, Aim, Outcome,
                   new_round / apply / tick / dismiss / place
   storage.py      Progress, Settings, LevelRecord; load / save / merge
+                  four sections: levels, facts, placements, targets
   shell/
-    app.py        App: event loop, Mode, three screens, all the wiring
+    app.py        App: event loop, Mode, LevelScreen, three screens, the wiring
     draw.py       palette, rocket, alien, court, field, runner, cabinets,
-                  the safe and its hoard, buttons, number line, Layout,
-                  the transform
-    audio.py      twelve synthesized clips, no asset files
+                  the safe and its hoard, the sheet of ice, its house, its
+                  sweeper and how stones stack,
+                  buttons, number line, Layout, the transform
+    audio.py      seventeen synthesized clips, no asset files
 tests/
   test_facts.py   pool contents, key stability, both orientations
   test_round.py   parts, re-queue, both win conditions
@@ -81,6 +86,7 @@ tests/
   test_select.py  the deck weighting, and that an unweighted deck never moved
   test_sentences.py  what a line is, and that every pool can build a deck
   test_crack.py   locks, the panel, and alarms a wrong answer trips
+  test_curl.py    the stone: one reducer, the tolerance, and what ends an end
 ```
 
 `Fact.strategy` is the route to the answer as numbers — a start and a list of
@@ -97,6 +103,13 @@ rather than `range(11)` — `0 ÷ ? = 0` is true of every divisor, so the zero p
 would sit in the deck being marked wrong forever. Pools are enumerated, not
 generated — 24 / 44 / 144 / 22 / 22 / 22 / 20 / 20 / 20, and `everything` is
 their concatenation (338), pinned by `test_pool_sizes`.
+
+The fraction pools are enumerated the same way — 4 / 7 / 13 / 18 / 14, and
+`fractions` is their concatenation (56) — and they live in `FRACTION_LEVELS`,
+not in `LEVELS`. `LEVELS_BY_ID` holds both: the shell looks a level up by the id
+on a card and never asks which family it came from, while a test that walks
+every fact pool does not walk a pool with no facts in it. A `Level` has facts or
+targets, never both.
 
 **Division's answer is the hop count, not where the line ends.** Every other
 operation's route lands on its own answer, so the highlighted last dot *is* the
@@ -146,6 +159,12 @@ These are the dials, and they are meant to be turned after watching him play.
 | `THROW_HOLD` | `shell/app.py` | 1.3s | how long a finished play is held |
 | `RUNNER_HEIGHT` | `shell/draw.py` | 46 | the ball carrier, in design pixels |
 | `STRIPE_EVERY` | `shell/draw.py` | `None` | yard stripes, in yards; `None` is the bare line |
+| `SPAN` | `domain/facts.py` | 240 | the ice, in units; **see the trap below** |
+| `STONES` | `domain/round.py` | 8 | stones in an end |
+| `STONE_LIVES` | `domain/round.py` | 3 | wide ones before the end is lost |
+| `SHEET` / `SHEET_EDGE` | `shell/draw.py` | rect / 80 | the ice, and the room outside the line for its labels |
+| `STONE_RADIUS` / `STONE_ROW` | `shell/draw.py` | 17 / 36 | a stone, and how far above the line the next one on its mark stands |
+| `SWEEPER_HEIGHT` | `shell/draw.py` | 76 | the figure at the hack, in design pixels |
 | `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 / 5 | pace, per level |
 
 `seconds_per_part` is the only per-level number; start and cap derive from it
@@ -153,6 +172,13 @@ These are the dials, and they are meant to be turned after watching him play.
 changing twice. `test_clock.py` asserts the derivation rather than the literals
 under both rule sets, so changing a level's pace does not break the suite —
 changing `GRACE_PARTS`, `BANK_PARTS` or `BALL_FLIGHT` intentionally will.
+
+Curling has no dial for how forgiving a shot is, and that is deliberate:
+`Target.tolerance` is half a tick gap, derived from the partition. Halves are
+generous and twelfths are tight without a constant per level, and the rings
+drawn at it are the only thing on screen that says the shot got harder. If it
+turns out to be the wrong bar for him, the honest fix is the *denominators a
+level asks*, not a fudge factor over all of them.
 
 Tennis is harder than the rocket at the same level: no grace bank, no banking
 ahead. Raise `BALL_FLIGHT` before touching `seconds_per_part`, which would
@@ -174,6 +200,97 @@ gives. Mouse positions convert once, through `draw.to_design`, at the event
 boundary — nothing downstream may see window coordinates. Symptom if this is
 ever bypassed: clicks are accurate near the top-left and drift further out,
 which reads as "sloppy hitboxes" and never as a scaling bug.
+
+**The target is an *item*, not a position on the line.** `Rules.targets_from_deck`
+picks between the two, and getting it wrong is arithmetic rather than taste.
+Football's `placing` derives its call from the marker — `parts + gains[...]` —
+so on a fraction level it would ask for `23/100` on a line ticked in sixths, and
+the number called would be a function of the stones already thrown rather than
+of the level. `parts` therefore means *stones in the house* in curling, and the
+`new_round` guard that pins `target == PLACE_MAX` fires only where the marker
+names the target. It must keep firing for football; a test pins that it does.
+
+**`place` is curling's `apply`, and it must do everything `apply` does.**
+Advance the queue, write the `Tally` against `Target.key`, credit the part, zero
+`on_current`. `apply` is never called in this mode — there is nothing to type —
+so anything it normally does and this branch does not simply never happens.
+Miss the zeroing and `on_current` accumulates across the whole end, so the last
+stone is recorded as having taken ninety seconds; nothing raises, and the lie is
+in the record a parent view would read. A fourth reducer beside `apply`, `tick`
+and `place` was the alternative: three copies of the tally write, the advance
+and the win check, drifting the first time `Tally` changes.
+
+**A wide stone is not re-queued.** `_advance` takes no `retry` here. A missed
+*fact* has to come back — retrieval, not echo — but the ghost has just shown him
+the true mark, so re-asking the same fraction three stones later is asking him
+to reproduce a picture he is still looking at. Symptom otherwise: the end fills
+with the one fraction he missed first, and it reads as a broken shuffle.
+
+**`tick` does *not* stop for a placement whose target came from the deck.**
+Everywhere else a due placement stops every clock, so aiming time never reaches
+`Tally.seconds` and cannot corrupt the deck weighting. In curling one is always
+due, so the same early return would stop the round's only clock forever and
+record every stone as instant — and nothing weights that deck, so there is
+nothing to protect. This is the one exception, and it is why `place` zeroing
+`on_current` is load-bearing rather than tidy.
+
+**Target rows must not go into `placements`.** `save` sorts that section with
+`key=lambda item: int(item[0])` — it is keyed by decade of the line. A key of
+`"2/3|6"` raises `ValueError` *inside `save`*, so `os.replace` never runs and
+**the whole file silently stops being written**. `merge` routes by
+`rules.targets_from_deck`, never by sniffing the shape of the key.
+
+**`Target` has no `.answer`, deliberately.** `apply` compares
+`given == question.answer`. Give `Target` one for symmetry and a stray keypad
+path in some future mode compares a typed integer against a span value and marks
+`160` correct for `2/3`. Leave the attribute absent so that path raises.
+
+**The house is drawn only once the stone has come to rest.** The rings are
+centred on the mark that was called and are exactly as wide as the tolerance, so
+a house on the ice while he is still aiming is the answer, printed — and the one
+thing he must not be able to read off the ice before he throws. `draw_sheet`
+gates them on `ghost`.
+
+**Stones on one mark stack, they do not overlap.** `1/2` and `2/4` are the same
+place, and two stones drawn on top of each other are one stone — which reads as
+a stone having gone missing rather than as two agreeing. `stone_rows` packs them
+upward from the line, capped at what fits under the top of the ice. Sideways is
+what a real stone would do and what this one must not: sideways is the answer.
+The ghost's gap line is drawn to the row the last stone actually stands in, or
+it points at bare ice below a stone that has been lifted out of the way.
+
+**The sheet keeps the *called* target's partition while a miss is being read.**
+`place` has already advanced the queue, so `round.current` is the next fraction
+and its ticks are a different partition. `Play.ghost` holds the `Target` and not
+just the two numbers, or the picture explaining the miss is drawn in the
+denominator of a question he has not been asked yet.
+
+**The Timer toggle is dead here**, as it is in Code Breaker: `start` forces
+`timed=False`. `CURLING.lives` is `None` and its `locks` are empty, so without
+that branch it falls through to the setting, and a round would drain a bank
+nothing can spend until `tick` ended a game nobody was racing.
+
+**A click on the ice must not dismiss the held miss**, and a keystroke must not
+throw a stone. Both are the rules the field already has, for the same reasons:
+`press` returns early while `placing` is set, and `NEXT_UP` is the only way out
+of the ghost.
+
+**`0/b` and `b/b` are not questions.** Both are the labelled ends of the line —
+free marks that measure nothing and inflate the record, the same failure
+`_divided` avoids by drawing from `range(1, 11)`.
+
+**A denominator added later must be re-checked against `SPAN`.** Every one in
+scope must divide 240 *and* leave an even quotient, or half a tick gap is not a
+whole number and `place`, `Aim` and the click conversion all learn floats for
+one denominator. 120 fails: `120 // 8` is 15. Sevenths and ninths fit no span
+that keeps the existing set whole. `test_the_span_keeps_every_tolerance_whole`
+runs the enumeration.
+
+**A mode's level cards are a field on `Mode`, with no default.** `LevelScreen`
+has no fallback for the same reason `render_play` dispatches through a dict: a
+fifth cabinet behind the arithmetic cards is a wrong game one click deep, and it
+would compile and draw. `fail_action` reads `self.game.levels.first`, or *Try
+again* on a curling failure starts a rocket level.
 
 **A pending placement stops every clock, the way a hint does.** `Round.placing`
 is *derived*, never stored. A stored one would have to be written on every path
@@ -343,9 +460,12 @@ path that moves `parts`, and one missed path is a vault that opens twice.
 a mismatch means the last vault never swings, or the round is won partway
 through a lock with lines still showing on the panel.
 
-**A dimmed cabinet must not be clickable.****A dimmed cabinet must not be clickable.** The `click` loop skips the `"soon"`
+**A dimmed cabinet must not be clickable.** The `click` loop skips the `"soon"`
 entry in `CABINETS`; without that it would set `self.mode` to a mode that does
-not exist and `App.game` would raise a `KeyError` on the next frame.
+not exist and `App.game` would raise a `KeyError` on the next frame. The grid is
+three across by two down now — five cabinets and one dark — and the height
+stayed 220 on purpose, so `cabinet_parts` and the test pinning `h = 440` are
+untouched.
 
 **`draw_cabinet`'s offsets scale with `rect.height`.** They were absolute, and
 below about 380 the control panel got a negative height, which pygame draws
@@ -405,8 +525,11 @@ message naming neither the cycle nor the mistake.
 `Round.losable`, not `Round.timed`: what makes a win farmable is having no way
 to lose, not having no clock. The rocket with the Timer toggle off has neither,
 so it still folds to `practice`; Code Breaker has no clock and three alarms a
-wrong answer trips, so its win is a launch. Asking `timed` was right until a mode
-arrived that could be lost without one. Tennis is always
+wrong answer trips, so its win is a launch. Curling has no clock either, and three wide
+stones; `losable` asks a third thing, `place_lives is not None`, which also
+makes an untimed *football* drive losable — correctly, since three wide throws
+end it. Asking `timed` was right until a mode arrived that could be lost without
+one. Tennis is always
 timed for the same reason it has no untimed form, and `new_round` raises rather
 than building a round with lives and no clock.
 
@@ -442,6 +565,12 @@ reads the rate back rather than hardcoding it.
 
 ## Making the two likely changes
 
+**A new fraction level.** Add a `Level` to `_FRACTION` in `domain/facts.py` with
+its (denominator, partition) pairs; `_targets` does the rest, and `FRACTIONS`
+picks it up because it is derived. Check the denominators against `SPAN` first —
+see the trap. Then place it: `FRACTIONS` in `app.py` is three columns and a tall
+card, and a fifth column is a layout decision. Update `test_fraction_pool_sizes`.
+
 **A new level.** Add a `Level` to `_ADDITION` or `_MULTIPLY` in
 `domain/facts.py` with its pair list and `seconds_per_part`; `_pool` does the
 rest, and `everything` picks it up because it is derived. Then place it: the
@@ -449,15 +578,16 @@ level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD` in
 `app.py`), so a fourth row needs a layout decision, not just an id in a tuple.
 Update `test_pool_sizes` — the `everything` total moves too.
 
-**A fifth game mode.** The 2x2 grid is **full** — a fifth cabinet is a layout
-decision before it is anything else. Otherwise: add a `Rules` to
-`domain/round.py` and a `Mode` to `MODES` in `app.py` (title, clip map, a `draw.Layout`, noun and what a part is
-worth in it, hold times, `rally` / `warns`), a renderer in the `render_play` dispatch, its clips
-in `audio.py`, and take the `"soon"` cabinet's rect in `CABINETS` — the grid is
-full at four, so a fifth is a layout decision, not an entry in a tuple. Ask
-first whether its clock is a bank or a deadline, and whether it interrupts
-itself: if none of `ROCKET`, `TENNIS` or `FOOTBALL` fits, `Rules` gains a dial
-rather than the shell gaining a rule.
+**A sixth game mode.** The 3x2 grid has exactly one slot left, the `"soon"` one
+— a *seventh* cabinet is a layout decision before it is anything else.
+Otherwise: add a `Rules` to `domain/round.py` and a `Mode` to `MODES` in
+`app.py` (title, clip map, a `draw.Layout`, a `LevelScreen`, noun and what a
+part is worth in it, hold times, `rally` / `warns`), a renderer in the
+`render_play` dispatch, its clips in `audio.py`, and take the `"soon"` rect in
+`CABINETS`. Ask first whether its clock is a bank or a deadline, whether it
+interrupts itself, and where its questions come from: if none of `ROCKET`,
+`TENNIS`, `FOOTBALL`, `CODE` or `CURLING` fits, `Rules` gains a dial rather than
+the shell gaining a rule.
 
 ## Testing, and what testing cannot reach
 

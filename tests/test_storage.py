@@ -4,9 +4,11 @@ import random
 from mathr.domain.facts import LEVELS_BY_ID
 from mathr.domain.round import (
     CODE,
-    LINES_TO_CRACK,
+    CURLING,
     FOOTBALL,
+    LINES_TO_CRACK,
     PARTS_TO_LAUNCH,
+    STONES,
     TENNIS,
     Aim,
     Tally,
@@ -188,3 +190,67 @@ def test_a_v2_file_without_placements_loads_empty(tmp_path):
     path = tmp_path / "progress.json"
     path.write_text(json.dumps({"version": 2, "levels": {}, "facts": {}}))
     assert load(path).placements == {}
+
+
+# --- fractions keep their own section ----------------------------------------
+
+
+def curled(level_id="thirds", stones=1, wide=False):
+    current = new_round(
+        LEVELS_BY_ID[level_id],
+        random.Random(0),
+        timed=False,
+        rules=CURLING,
+        mode_id="curling",
+    )
+    for _ in range(stones):
+        off = current.current.tolerance + 1 if wide else 0
+        current, _ = place(current, current.current.value + off)
+    return current
+
+
+def test_a_stone_is_recorded_under_targets_and_never_under_facts():
+    round = curled()
+    after = merge(Progress(), round)
+    assert set(after.facts) == set()
+    assert set(after.targets) == set(round.attempts)
+    assert next(iter(after.targets)).count("/") == 1
+
+
+def test_target_rows_accumulate_across_ends():
+    after = merge(Progress(), curled())
+    key = next(iter(after.targets))
+    again = merge(after, curled())
+    assert again.targets[key].answered == 2
+
+
+def test_a_football_round_still_writes_its_aims_by_bucket():
+    drive = new_round(
+        LEVELS_BY_ID["fives"], random.Random(0), rules=FOOTBALL, mode_id="football"
+    )
+    drive, _ = place(drive, drive.placing)
+    after = merge(Progress(), drive)
+    assert after.targets == {}
+    assert [int(bucket) for bucket in after.placements]
+
+
+def test_targets_round_trip(tmp_path):
+    path = tmp_path / "progress.json"
+    progress = Progress(targets={"2/3|6": Tally(3, 1, 4, 12.5)})
+    save(path, progress)
+    assert load(path) == progress
+
+
+def test_a_file_from_before_the_stones_still_loads(tmp_path):
+    """The section is additive, which is why `Fact.key` and the level key are
+    both untouched and `VERSION` does not move."""
+    path = tmp_path / "progress.json"
+    path.write_text(json.dumps({"version": 2, "levels": {}, "facts": {}}))
+    assert load(path).targets == {}
+
+
+def test_a_won_end_is_a_launch_though_it_has_no_clock():
+    round = curled(stones=STONES)
+    after = merge(Progress(), round)
+    assert after.level("curling", "thirds").launches == 1
+    assert after.level("curling", "thirds").practice == 0

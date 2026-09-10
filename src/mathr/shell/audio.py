@@ -241,6 +241,38 @@ def _incomplete():
     return _Shape(seconds, wave)
 
 
+def _slide():
+    """A stone on ice: a long, soft rush with no pitch in it. It plays on every
+    thrown stone that does not count, so it has to be the *absence* of a reward
+    rather than a failure noise — nothing about a wide stone is a buzzer."""
+    seconds = 0.55
+    rng = random.Random(19)
+    noise = [rng.uniform(-1, 1) for _ in range(4096)]
+
+    def wave(t):
+        share = t / seconds
+        # The rush slows as the stone does: the sampling rate falls away.
+        rush = noise[int(t * (5200 - 3000 * share)) % len(noise)]
+        return rush * _envelope(t, seconds, attack=0.08) * (1.0 - 0.5 * share)
+
+    return _Shape(seconds, wave)
+
+
+def _inhouse():
+    """A stone coming to rest in the house: the granite knock, then a third
+    rising off it. Sibling of `_catch` — it is the reward in a mode that has
+    exactly one."""
+    seconds = 0.42
+
+    def wave(t):
+        knock = math.sin(2 * math.pi * 220 * t) * math.exp(-t * 26)
+        note = 587 if t < seconds * 0.4 else 880
+        ring = math.sin(2 * math.pi * note * t) * _envelope(t, seconds, attack=0.01)
+        return 0.7 * knock + 0.55 * ring
+
+    return _Shape(seconds, wave)
+
+
 class Sounds:
     """Silent by construction if the mixer is unavailable."""
 
@@ -264,6 +296,8 @@ class Sounds:
                 "tumbler": _tone(_tumbler(), amplitude=0.4),
                 "unlock": _tone(_unlock(), amplitude=0.42),
                 "alarm": _tone(_alarm(), amplitude=0.22),
+                "slide": _tone(_slide(), amplitude=0.2),
+                "inhouse": _tone(_inhouse(), amplitude=0.45),
             }
         except pygame.error:
             self._clips = {}

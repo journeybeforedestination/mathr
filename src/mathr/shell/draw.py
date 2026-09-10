@@ -1249,6 +1249,16 @@ DOWNFIELD = Layout(
     pygame.Rect(60, 150, 620, 236),
     (390, 500),  # left of the Try again row, and clear of the field above it
 )
+#: The one mode with nothing to type. `entry` is an empty rect because there is
+#: no box: the click on the ice is the whole answer, and `render_entry` — which
+#: is what would draw one — is never reached while a placement is due, which in
+#: this mode is always.
+ONICE = Layout(
+    (640, 470),
+    pygame.Rect(0, 0, 0, 0),
+    HINT_BOX,
+    (400, 500),  # left of the Try again row, as the field's is
+)
 
 
 def _hint_positions(strategy) -> tuple[int, ...]:
@@ -1380,3 +1390,251 @@ def draw_number_line(
 
     if caption is not None:
         text(surface, label_font, caption, (rect.centerx, rect.bottom - 30), GOOD)
+
+
+# --- the ice ----------------------------------------------------------------
+# A sheet marked 0 to 1 and ticked into equal parts. Everything about it is
+# drawn from the target's own numbers: the ticks are its partition and the house
+# is exactly its tolerance wide, so the ring shrinking as denominators grow is
+# the only thing on screen that says the shot got harder.
+
+SHEET = pygame.Rect(60, 156, 1160, 254)
+SHEET_EDGE = 80  # room outside the line for the 0 and 1 labels
+ICE = (222, 234, 244)
+ICE_DARK = (196, 212, 228)
+ICE_LINE = (120, 140, 160)
+HOUSE_BLUE = (74, 130, 200)
+HOUSE_RED = (206, 82, 96)
+GRANITE = (110, 116, 132)
+GRANITE_DARK = (72, 78, 92)
+
+#: The line the stones sit on, and how they pile up when two share a mark.
+SHEET_LINE = SHEET.centery + 18
+STONE_RADIUS = 17
+STONE_ROW = 2 * STONE_RADIUS + 2  # how far above the line the next one stands
+SWEEPER_HEIGHT = 76  # the figure at the hack, in design pixels
+
+#: Below the ice: what he is being asked for, and nothing else. There is no
+#: keypad in this mode, so the band is the call's alone.
+CALL_BAND = pygame.Rect(60, 430, 1160, 300)
+
+
+def sheet_x(value: float, span: int) -> int:
+    """Where a position on the line sits across the ice. The one mapping, both
+    ways — the sibling of `field_x`."""
+    playable = SHEET.width - 2 * SHEET_EDGE
+    return int(SHEET.left + SHEET_EDGE + playable * max(0.0, min(1.0, value / span)))
+
+
+def sheet_units(position: tuple[int, int], span: int) -> int | None:
+    """A click in design space, as a position on the line. None if it missed.
+
+    Vertically generous for the reason `field_yards` is: he is aiming at a
+    horizontal position, and a throw that reads as on the line should not be
+    lost for being an inch high.
+    """
+    x, y = position
+    if not SHEET.inflate(0, 40).collidepoint(x, y):
+        return None
+    playable = SHEET.width - 2 * SHEET_EDGE
+    # Clamped rather than rejected: the strip outside the line is still a throw
+    # at the end of it, the way a click in an end zone is a throw to the goal.
+    return max(0, min(span, round(span * (x - SHEET.left - SHEET_EDGE) / playable)))
+
+
+def _stone(surface, centre: tuple[int, int], radius: int, handle) -> None:
+    """Granite with a coloured handle on it, which is what says *stone* rather
+    than *dot* at this size."""
+    x, y = int(centre[0]), int(centre[1])
+    pygame.draw.circle(surface, GRANITE_DARK, (x, y + 2), radius)
+    pygame.draw.circle(surface, GRANITE, (x, y), radius)
+    pygame.draw.circle(surface, GRANITE_DARK, (x, y), radius, width=max(1, radius // 6))
+    pygame.draw.circle(surface, handle, (x, y - int(radius * 0.15)), max(2, int(radius * 0.42)))
+
+
+def _sweeper(surface, x: int, feet_y: int, height: float, now: float) -> None:
+    """The figure at the hack, drawn the way the ball carrier is: eight blocks
+    tall, two frames, rectangles rather than curves.
+
+    Same idiom rather than the same function — `_runner` is a helmet, a jersey
+    and a football, and parameterising all three to share the legs would be more
+    code than the second figure is. What they share is the block grid, which is
+    the part that has to match for the two cabinets to look like one program.
+
+    The broom sweeps toward the house, which is the direction the stone goes.
+    """
+    unit = height / 8
+    stroke = int(now * 3) % 2  # slow, so it reads as sweeping and not as running
+    top = feet_y - height
+
+    def block(left, up, wide, tall, colour) -> None:
+        pygame.draw.rect(
+            surface,
+            colour,
+            pygame.Rect(
+                int(x + left * unit),
+                int(top + up * unit),
+                max(1, int(wide * unit)),
+                max(1, int(tall * unit)),
+            ),
+        )
+
+    block(-1.5, 5.1, 1.3, 2.9, PANEL_DARK)  # legs, planted: he is going nowhere
+    block(0.3, 5.1, 1.3, 2.9, PANEL_DARK)
+    block(-1.8, 2.3, 3.6, 3.0, HOUSE_RED)  # the sweater: the one colour on the ice
+    block(-1.2, 1.0, 2.4, 1.5, SKIN)  # face under the hat
+    # Blue, not white: a pale hat on pale ice is a hole in his head.
+    block(-1.5, 0.1, 3.0, 1.1, HOUSE_BLUE)  # the toque, wider than the head
+    pygame.draw.circle(
+        surface, ACCENT, (int(x), int(top + 0.1 * unit)), max(3, int(unit * 0.38))
+    )
+
+    # Both hands down the shaft, and the head of the broom flat on the ice in
+    # front of him — the two frames are the sweep.
+    reach = 3.6 + 1.0 * stroke
+    block(1.0, 2.8, 1.6, 0.8, SKIN)
+    shaft_top = (x + 1.4 * unit, top + 2.6 * unit)
+    shaft_foot = (x + reach * unit, feet_y - 0.3 * unit)
+    pygame.draw.line(surface, BRASS, shaft_top, shaft_foot, max(3, int(unit * 0.26)))
+    head = pygame.Rect(0, 0, max(4, int(unit * 2.0)), max(3, int(unit * 0.6)))
+    head.center = (int(shaft_foot[0]), int(feet_y - unit * 0.2))
+    # Dark, because the head of a broom lies *on* the ice and a pale one on pale
+    # ice is a gap in the drawing.
+    pygame.draw.rect(surface, PANEL, head, border_radius=3)
+
+
+def stone_rows(positions, span: int, radius: int = STONE_RADIUS) -> tuple[int, ...]:
+    """Which row each stone stands in, counting up from the line.
+
+    Two stones on the same mark is the whole point of some of these levels —
+    `1/2` and `2/4` are the same place — and drawn on top of each other they are
+    one stone, which reads as a stone having gone missing. Real ones would nudge
+    each other sideways; sideways is the answer here, so they stack instead.
+
+    Capped at what fits between the line and the top of the ice: past that they
+    do overlap, which is better than a stone drawn off the sheet.
+    """
+    ceiling = max(0, (SHEET_LINE - SHEET.top - radius - 8) // STONE_ROW)
+    placed: list[tuple[int, int]] = []
+    rows: list[int] = []
+    for value in positions:
+        x = sheet_x(value, span)
+        row = 0
+        while row < ceiling and any(
+            other_row == row and abs(other_x - x) < 2 * radius for other_x, other_row in placed
+        ):
+            row += 1
+        placed.append((x, row))
+        rows.append(row)
+    return tuple(rows)
+
+
+def _house(surface, centre_x: int, line_y: int, spread: int) -> None:
+    """The rings, exactly as wide as the shot is forgiving.
+
+    Ellipses rather than circles: at the easy denominators the tolerance is a
+    quarter of the whole line, and a circle that wide is taller than the sheet.
+    Squashed, it reads as a house seen from behind the hack, which is the view
+    the ice is already drawn in.
+    """
+    tall = min(spread, SHEET.height // 2 - 14)
+    for share, colour in ((1.0, HOUSE_BLUE), (0.6, INK), (0.3, HOUSE_RED)):
+        rings = pygame.Rect(0, 0, max(4, int(spread * 2 * share)), max(4, int(tall * 2 * share)))
+        rings.center = (centre_x, line_y)
+        pygame.draw.ellipse(surface, colour, rings)
+    pygame.draw.circle(surface, INK, (centre_x, line_y), 5)
+
+
+def draw_sheet(surface, font, span: int, target, stones, ghost: int | None = None,
+               now: float = 0.0) -> None:
+    """The ice: the line, its ticks, the house, and every stone thrown so far.
+
+    `target` is what is being asked *now* — or, while a miss is being read, the
+    one that was asked, because the queue has already moved on and redrawing the
+    ticks in the next fraction's partition under a stone he is still reading
+    would explain the wrong question.
+
+    `ghost` is where his last stone actually went, drawn against the true mark —
+    and it is also what brings the house out, because the rings say where the
+    answer was.
+    """
+    pygame.draw.rect(surface, ICE, SHEET, border_radius=10)
+    pygame.draw.rect(surface, ICE_DARK, SHEET, width=3, border_radius=10)
+    line_y = SHEET_LINE
+    left, right = sheet_x(0, span), sheet_x(span, span)
+
+    if ghost is not None and target is not None:
+        # Only once the stone has come to rest. The house is centred on the mark
+        # that was called, so drawing it while he is still aiming is drawing him
+        # the answer — and the rings are the tolerance, which is the one thing
+        # he must not be able to read off the ice before he throws.
+        _house(surface, sheet_x(target.value, span), line_y, sheet_x(target.tolerance, span) - left)
+
+    pygame.draw.line(surface, ICE_LINE, (left, line_y), (right, line_y), 4)
+    if target is not None:
+        # Every tick, including the ones he is not being asked for: the
+        # partition *is* the denominator, and a line ticked in sixths is what
+        # makes 1/3 findable at all.
+        for step in range(target.ticks + 1):
+            x = sheet_x(span * step // target.ticks, span)
+            pygame.draw.line(surface, ICE_LINE, (x, line_y - 14), (x, line_y + 14), 2)
+    for value, label in ((0, "0"), (span, "1")):
+        x = sheet_x(value, span)
+        pygame.draw.line(surface, ICE_LINE, (x, SHEET.top + 16), (x, line_y + 26), 4)
+        text(surface, font, label, (x, line_y + 52), ICE_LINE)
+
+    # Just behind the zero end, which is where a curler throws from — and it
+    # keeps the mark for nought clear of him, rather than running up through his
+    # head like a flagpole.
+    _sweeper(surface, left - 24, line_y + 2, SWEEPER_HEIGHT, now)
+
+    rows = stone_rows([value for value, _ in stones], span)
+    if ghost is not None and target is not None:
+        true_x = sheet_x(target.value, span)
+        # The stone he has just thrown is the last one in the list, so the gap is
+        # drawn to where it actually stands — a stone lifted into a row with a
+        # line still pointing at the ice below it explains nothing.
+        thrown = (sheet_x(ghost, span), line_y - (rows[-1] if rows else 0) * STONE_ROW)
+        pygame.draw.line(surface, GOOD, (true_x, line_y - 30), (true_x, line_y + 58), 4)
+        pygame.draw.line(surface, BAD, thrown, (true_x, line_y), 3)
+        # Below the line, clear of however high the stones have piled.
+        text(surface, font, target.prompt, (true_x, line_y + 80), GOOD)
+
+    for (value, counted), row in zip(stones, rows):
+        # The handle is the whole of what says whether it counted, and a grey
+        # one on grey granite says nothing at all.
+        _stone(
+            surface,
+            (sheet_x(value, span), line_y - row * STONE_ROW),
+            STONE_RADIUS,
+            GOOD if counted else BAD,
+        )
+
+
+def draw_stone_call(surface, font, label_font, target, rect=CALL_BAND) -> None:
+    """The fraction he is being asked to place. No keypad under it — the click
+    is the whole answer, and a second thing to answer is what the other four
+    cabinets are for."""
+    text(surface, label_font, "slide the stone to", (rect.centerx, rect.top + 40), DIM)
+    text(surface, font, target.prompt, (rect.centerx, rect.top + 128), ACCENT)
+    text(surface, label_font, "click the ice", (rect.centerx, rect.top + 216), DIM)
+
+
+def draw_rink(surface, rect: pygame.Rect, now: float) -> None:
+    """The curling cabinet's screen: a stone sliding at a house, forever."""
+    inset = rect.inflate(-int(rect.width * 0.09), -int(rect.height * 0.13))
+    pygame.draw.rect(surface, ICE, inset, border_radius=6)
+    line_y = inset.centery + int(inset.height * 0.1)
+    pygame.draw.line(surface, ICE_LINE, (inset.left + 6, line_y), (inset.right - 6, line_y), 2)
+    house = int(inset.height * 0.3)
+    centre = inset.right - int(inset.width * 0.22)
+    for share, colour in ((1.0, HOUSE_BLUE), (0.55, INK), (0.28, HOUSE_RED)):
+        rings = pygame.Rect(0, 0, max(3, int(house * 2 * share)), max(3, int(house * 1.2 * share)))
+        rings.center = (centre, line_y)
+        pygame.draw.ellipse(surface, colour, rings)
+    share = (now * 0.35) % 1.0
+    stone = max(3, int(inset.height * 0.11))
+    # From inside the ice, not from its edge: a stone half off the sheet reads
+    # as a drawing bug rather than as one still on its way.
+    start = inset.left + stone
+    _stone(surface, (int(start + (centre - start) * share), line_y), stone, ACCENT)

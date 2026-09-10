@@ -161,3 +161,74 @@ def test_every_cabinet_in_the_grid_has_a_panel_with_height():
         assert panel.height > 0
         assert screen.bottom < panel.top < panel.bottom <= rect.bottom
         assert rect.top < marquee.top and marquee.bottom < screen.top
+
+
+# --- the ice ----------------------------------------------------------------
+
+
+def test_the_ends_of_the_sheet_are_nought_and_one():
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import SHEET, sheet_units
+
+    y = SHEET.centery
+    assert sheet_units((SHEET.left + 80, y), SPAN) == 0
+    assert sheet_units((SHEET.right - 80, y), SPAN) == SPAN
+
+
+def test_a_click_across_the_ice_only_ever_moves_up_the_line():
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import SHEET, sheet_units
+
+    y = SHEET.centery
+    read = [sheet_units((x, y), SPAN) for x in range(SHEET.left, SHEET.right, 10)]
+    assert read == sorted(read)
+    assert read[0] == 0 and read[-1] == SPAN
+
+
+def test_a_click_off_the_ice_is_not_a_throw():
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import SHEET, sheet_units
+
+    assert sheet_units((SHEET.centerx, SHEET.top - 60), SPAN) is None
+    assert sheet_units((SHEET.centerx, SHEET.bottom + 60), SPAN) is None
+
+
+def test_a_finer_partition_draws_a_smaller_house():
+    """The rings are the tolerance, so the shot visibly gets harder."""
+    from mathr.domain.facts import SPAN, Target
+    from mathr.shell.draw import sheet_x
+
+    def spread(target):
+        return sheet_x(target.tolerance, SPAN) - sheet_x(0, SPAN)
+
+    assert spread(Target(1, 12, 12)) < spread(Target(1, 3, 3)) < spread(Target(1, 2, 2))
+
+
+def test_two_stones_on_one_mark_stand_in_a_column():
+    """1/2 and 2/4 are the same place, and one stone drawn over another is a
+    stone that has gone missing."""
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import stone_rows
+
+    assert stone_rows([120, 120, 120], SPAN) == (0, 1, 2)
+
+
+def test_stones_far_enough_apart_all_sit_on_the_line():
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import stone_rows
+
+    assert stone_rows([0, 60, 120, 180, 240], SPAN) == (0, 0, 0, 0, 0)
+
+
+def test_a_column_of_stones_never_climbs_off_the_ice():
+    from mathr.domain.facts import SPAN
+    from mathr.shell.draw import (
+        SHEET,
+        SHEET_LINE,
+        STONE_RADIUS,
+        STONE_ROW,
+        stone_rows,
+    )
+
+    rows = stone_rows([120] * 8, SPAN)
+    assert SHEET_LINE - max(rows) * STONE_ROW - STONE_RADIUS >= SHEET.top

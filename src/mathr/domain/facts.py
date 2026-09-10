@@ -91,6 +91,67 @@ class Fact:
         return Strategy(self.a, (-self.b,))
 
 
+#: The line a fraction is placed on, in units of its own. Every denominator in
+#: scope must divide this *and* leave an even quotient, or half a tick gap —
+#: which is the tolerance — is not a whole number, and `place`, the click
+#: conversion and the record all have to learn floats for one denominator.
+#: 120 fails on eighths: `120 // 8` is 15, and half of that is 7.5. Before
+#: adding a denominator, re-run
+#: `[d for d in (2,3,4,5,6,8,10,12) if SPAN % d or (SPAN // d) % 2]` — it must
+#: still be empty. Sevenths and ninths are in neither this span nor any span
+#: that keeps the existing ones whole.
+SPAN = 240
+
+
+@dataclass(frozen=True)
+class Target:
+    """A fraction, and the line it is to be placed on.
+
+    `ticks` is how many equal parts the line is drawn in, and it is not always
+    `den`: `2/3` on thirds is the plain reading, and `1/3` on a line ticked in
+    sixths is equivalence, at no mechanical cost.
+
+    There is deliberately no `.answer`. Anything reaching for one is code that
+    thinks this question is typed, and it should raise at the attribute rather
+    than quietly compare a keypad entry against a position on a line.
+    """
+
+    num: int
+    den: int
+    ticks: int  # a multiple of `den`, or the fraction has no mark to land on
+
+    @property
+    def value(self) -> int:
+        """Where it truly lies, in span units."""
+        return SPAN * self.num // self.den
+
+    @property
+    def tolerance(self) -> int:
+        """Half a tick gap: near enough that no other tick is nearer.
+
+        Derived rather than a constant, so halves are forgiving and twelfths are
+        tight without a dial per level — and so the ring drawn at it is the only
+        thing on screen that says the shot got harder.
+        """
+        return SPAN // (2 * self.ticks)
+
+    @property
+    def prompt(self) -> str:
+        return f"{self.num}/{self.den}"
+
+    @property
+    def key(self) -> str:
+        """The partition is part of the identity, because `1/3` on thirds and
+        `1/3` on sixths are different questions and must not share a row."""
+        return f"{self.num}/{self.den}|{self.ticks}"
+
+    @property
+    def strategy(self) -> Strategy:
+        """The route, in *tick* units rather than span units: `1/3` on sixths is
+        one hop of two, which is the equivalence said out loud."""
+        return Strategy(0, (self.ticks // self.den,) * self.num)
+
+
 @dataclass(frozen=True)
 class Question:
     """A fact as it is asked: the same equation, with `=` on either side.
@@ -211,11 +272,17 @@ class Sentence:
         return (self.left.strategy, self.right.strategy)
 
 
-#: What a round's queue holds. A mode's deck is one or the other, never mixed,
-#: but the queue is typed for both because everything downstream of it —
-#: `_advance`, the `Tally` keyed by `.key`, `apply` comparing `.answer` — only
-#: ever touches the members these two have in common.
-Item = Question | Sentence
+#: What a round's queue holds. A mode's deck is one of these, never mixed, but
+#: the queue is typed for all three because everything downstream of it —
+#: `_advance`, the `Tally` keyed by `.key`, the reducer that resolves it — only
+#: ever touches the members they have in common: `.key`, `.prompt` and the
+#: route. A *parallel* deck beside the queue is the trap: `tick` charges
+#: `on_current` to `queue[0]`, so time spent on one kind of item lands in the
+#: `Tally` of another.
+#:
+#: `Target` is the one with no `.answer`, which is why `apply` is not the
+#: reducer that resolves it — see `place` in `round.py`.
+Item = Question | Sentence | Target
 
 
 #: One round replays this deck; longer than the fifteen lines a round needs, and
@@ -349,6 +416,17 @@ def shuffled(
     return tuple(Question(fact, rng.random() < 0.5) for fact in keyed)
 
 
+def targets(pool: tuple[Target, ...], rng: random.Random) -> tuple[Target, ...]:
+    """A pool of fractions as a deck.
+
+    A flat shuffle of the whole pool, never a route through `shuffled`: that
+    returns `Question`s, and its unweighted branch interleaves the orientation
+    flip with `rng.sample` in an order two seeded tests pin. A short pool simply
+    replays — `_advance` tops the queue up — exactly as a thin fact pool does.
+    """
+    return tuple(rng.sample(pool, len(pool)))
+
+
 def _from_pair(a: int, b: int) -> tuple[Fact, ...]:
     """The four questions a number bond answers.
 
@@ -412,6 +490,12 @@ class Level:
     name: str
     facts: tuple[Fact, ...]
     seconds_per_part: float
+    #: What this level asks, where it asks for a fraction to be placed rather
+    #: than for an answer to be typed. One type rather than two: a level is
+    #: also a card on a screen, and a second level type would fork that screen
+    #: as well as this file. A level has one or the other, never both — which
+    #: is what `Rules.targets_from_deck` picks between.
+    targets: tuple[Target, ...] = ()
     """The pace one part has to be earned at. Every other clock constant is
     derived from this, so a level is retuned by changing one number.
 
@@ -458,4 +542,51 @@ EVERYTHING = Level(
 
 LEVELS: tuple[Level, ...] = _ADDITION + _MULTIPLY + _DIVIDE + (EVERYTHING,)
 
-LEVELS_BY_ID = {level.id: level for level in LEVELS}
+
+def _targets(partitions: tuple[tuple[int, int], ...]) -> tuple[Target, ...]:
+    """Every proper fraction with these (denominator, partition) pairs.
+
+    `0/b` and `b/b` are left out on purpose: both are the labelled ends of the
+    line, so they are free marks that measure nothing and inflate the record —
+    the same reason `_divided` starts at one rather than nought.
+    """
+    return tuple(
+        Target(num, den, ticks) for den, ticks in partitions for num in range(1, den)
+    )
+
+
+#: The pace dial below is dead in these levels — the mode that asks them has no
+#: clock, and nothing credits a part — but `Level` is one type on purpose.
+#:
+#: Ticked in its own denominator, four families of it: this is `3.NF.A.2`,
+#: locating `a/b` on a line partitioned into `b` equal parts.
+_FRACTION: tuple[Level, ...] = (
+    Level("halves", "Halves & Fourths", (), 5.0, _targets(((2, 2), (4, 4)))),
+    Level("thirds", "Thirds & Sixths", (), 5.0, _targets(((3, 3), (6, 6)))),
+    Level("fifths", "Fifths & Tenths", (), 5.0, _targets(((5, 5), (10, 10)))),
+    Level("eighths", "Eighths & Twelfths", (), 5.0, _targets(((8, 8), (12, 12)))),
+    #: And the one where the two numbers disagree: `1/3` called on a line ticked
+    #: in sixths. `3.NF.A.3` — equivalence — for the price of one more pool.
+    Level(
+        "same_as",
+        "Same As",
+        (),
+        5.0,
+        _targets(((2, 4), (2, 6), (2, 8), (2, 12), (3, 6), (3, 12), (4, 8), (4, 12))),
+    ),
+)
+
+FRACTIONS = Level(
+    "fractions",
+    "Every Fraction",
+    (),
+    5.0,
+    tuple(target for level in _FRACTION for target in level.targets),
+)
+
+FRACTION_LEVELS: tuple[Level, ...] = _FRACTION + (FRACTIONS,)
+
+#: One map, two kinds of level: the shell looks a level up by the id on a card
+#: and never asks which family it came from. `LEVELS` stays what it was, so a
+#: test that walks every fact pool does not walk a pool with no facts in it.
+LEVELS_BY_ID = {level.id: level for level in LEVELS + FRACTION_LEVELS}

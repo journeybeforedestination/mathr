@@ -2,7 +2,7 @@
 
 A desktop math-fact game built for one specific second grader.
 
-Four games, one question pool. In **Rocket Builder**, every fact he gets right
+Five games. In **Rocket Builder**, every fact he gets right
 bolts another part onto a rocket; every miss knocks the top part off. Ten parts
 on and it counts down and launches — but an alien saucer is closing in the whole
 time, and if the clock runs out first it takes the rocket instead. In **Tennis
@@ -10,13 +10,20 @@ Match**, an opponent serves and the ball falls down the court; solving the
 problem before it lands swats it back. Ten returns wins, three balls past him
 loses. In **Touchdown Drive**, every play is a throw and a catch: a yard
 downfield is called, he clicks where that number goes on the field, and then has
-to answer a math fact before the ball lands to secure the catch.
+to answer a math fact before the ball lands to secure the catch. In **Code
+Breaker** the questions are number sentences and the numbers he works out spell
+out a safe's combination. In **Curling Club** he is shown a fraction and slides
+a stone to where it goes on a sheet of ice ticked into equal parts.
 
 The point is fluency: number bonds recalled fast enough to be useful, rather than
-counted out on fingers. Two of them are deliberately not that. Where a number
+counted out on fingers. Three of them are deliberately not that. Where a number
 sits on a line cannot be answered from a memorised table, and neither is
 `7 + 6 = ? + 5`, which is about what `=` *means* rather than what `7 + 6` is.
-That one is the only cabinet with no clock in it at all.
+The last two cabinets have no clock in them at all, and Curling Club has no
+keypad either — the only thing it ever asks for is a click.
+
+Four cabinets share one pool of arithmetic facts; the fifth has its own pool of
+fractions, so it has its own level cards.
 
 ```sh
 uv run mathr
@@ -24,9 +31,9 @@ uv run mathr
 
 ## Playing
 
-**Arcade → a cabinet → pick a level.** Every cabinet leads to the same level
-grid, and every level is unlocked from the start; there is no sequence to grind
-through.
+**Arcade → a cabinet → pick a level.** The four arithmetic cabinets lead to the
+same level grid; Curling Club has its own, because a fraction is not a fact.
+Every level is unlocked from the start; there is no sequence to grind through.
 
 A question appears with exactly one slot blank, and the `=` lands on either
 side — the same fact is asked both ways round:
@@ -163,8 +170,8 @@ The intercepted lines are behind its glass, each with one number missing:
   safe is full of gold — bars, coins and gems on two shelves — under
   *VAULT OPEN!*
 
-The lines are built from the level's own facts, so every cabinet still leads to
-the same twelve cards. Four shapes, in rough order of how much relation they
+The lines are built from the level's own facts, so every arithmetic cabinet
+still leads to the same cards. Four shapes, in rough order of how much relation they
 need: `7 + 6 = ? + 5` (two expressions, neither readable on its own),
 `3 + 5 = ? + 3` (commuted), `12 ÷ 2 = ? + 4` (the value split in two), and
 plain `7 + 6 = ?`, which is the question the other three cabinets already ask
@@ -179,6 +186,58 @@ the reason that shape exists at all.
 saying whether they landed together. One span on purpose: two lines each scaled
 to their own numbers would put both endpoints in the same place, which is the
 opposite of the point.
+
+**Curling Club**
+
+No clock and no keypad. A fraction is called, and the whole answer is where he
+clicks on a sheet of ice marked 0 at one end and 1 at the other and ticked into
+equal parts:
+
+```
+  misses ● ○ ○                                    3 / 8 stones
+
+ ┌────────────────────────────────────────────────────────────┐
+ │  │                                                       │ │
+ │  ├────┬────┬────●────┬────┬────●────┬────┬────┬────●────┤   │
+ │  0                                                      1   │
+ └────────────────────────────────────────────────────────────┘
+
+                        slide the stone to
+                               3/4
+                           click the ice
+```
+
+- **The ticks are the denominator.** `2/3` is called on a line cut into thirds,
+  so the mark is there to be found rather than guessed at — this is the whole of
+  what the mode teaches.
+- **The stone stops exactly where he clicked.** There is no power meter and no
+  wobble: an error that is partly motor would corrupt the one thing being
+  measured.
+- **Near enough is half a tick gap** — near enough that no other tick is nearer.
+  So halves are forgiving and twelfths are tight, and nothing needs tuning per
+  level.
+- **A stone in the house counts and stays on the ice.** Eight of them win the
+  end. The stones piling up along the line are what carries the round, in place
+  of the clock the other cabinets have. Two that land on the same mark — `1/2`
+  and `2/4` are the same place — stand one above the other rather than on top of
+  each other, because sideways is the answer and cannot be nudged.
+- **Someone is standing at nought with a broom**, sweeping, drawn in the same
+  blocks as the ball carrier in Touchdown Drive.
+- **A wide stone brings out the house** — rings exactly as wide as the shot was
+  forgiving, centred on the true mark, with his stone sitting outside them and a
+  line saying where it should have gone: *1/3 is 2 ticks along a line cut into
+  6*. It is held until he presses *Next stone*; a click on the ice cannot
+  dismiss it, or reading the miss would throw the next stone at whatever he
+  happened to be looking at.
+- **Three wide stones** end the end, and *Try again*.
+
+The rings are only ever drawn *after* the stone has come to rest. They are
+centred on the mark that was called, so a house on the ice while he is still
+aiming is the answer, printed.
+
+*Same As* is the level where the two numbers disagree on purpose: `1/3` called
+on a line ticked in sixths, `1/2` on a line ticked in twelfths. Same place, a
+different name for it.
 
 ### The levels
 
@@ -210,6 +269,20 @@ one `2 × 6 = 12` draws.
 
 *Tricky Facts* keeps its dimmed button in the Everything column: reserved, not
 built.
+
+Curling Club has its own six, and no pace at all — nothing there is timed:
+
+| Level | What it drills |
+|---|---|
+| **Halves & Fourths** | `1/2`, and the fourths, each on its own ticks |
+| **Thirds & Sixths** | thirds and sixths |
+| **Fifths & Tenths** | fifths and tenths |
+| **Eighths & Twelfths** | the tight ones |
+| **Same As** | `1/3` on sixths, `1/2` on twelfths — equivalence |
+| **Every Fraction** | all 56, shuffled together |
+
+`0/b` and `b/b` are left out of every one of them: both are the labelled ends of
+the line, so they are marks he gets for free.
 
 Both question forms are always asked, in both orientations. `3 + ? = 5` matters
 as much as `3 + 2 = ?`, because the missing addend *is* the number bond — and that is the
