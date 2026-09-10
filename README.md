@@ -27,6 +27,7 @@ fractions, so it has its own level cards.
 
 ```sh
 uv run mathr
+uv run mathr --test   # play against a scratch record, not his
 ```
 
 ## Playing
@@ -430,11 +431,26 @@ yet, for the same reason as the per-fact tallies.
 one launch against nine failures, the seconds-per-part for that level is wrong —
 and nothing else in the file would have told you.
 
+### Test mode
+
+`uv run mathr --test` plays the whole game against `test-progress.json`, a
+sibling of his file in the same directory. It says so on the menu, and nowhere
+else — a test round looks identical to a real one during play, and the failure
+is silent in the worst direction: you conclude his progress was lost.
+
+It writes a real file rather than nothing, because `save` is the one place a bug
+stops the record being written with no sign on screen, so a test session has to
+exercise it — just not against his. Deleting `test-progress.json` is always safe.
+It is a flag rather than an environment variable for the same reason: an exported
+variable outlives the session, and that is how a real round ends up in the wrong
+file.
+
 ## Development
 
 ```sh
-uv run mathr      # play
-uv run pytest     # 240 tests: facts, round rules, both clocks, storage, scaling
+uv run mathr          # play
+uv run mathr --test   # same game, against test-progress.json beside his
+uv run pytest         # 241 tests: facts, round rules, both clocks, storage, scaling
 ```
 
 One runtime dependency, `pygame-ce` (never upstream `pygame` — it has no cp314

@@ -11,9 +11,10 @@ how it plays; this file is what you need to change it safely.
 ## Commands
 
 ```sh
-uv run mathr      # play
-uv run pytest     # the whole suite, ~0.5s
-uv add <pkg>      # tell the user before adding any dependency
+uv run mathr          # play
+uv run mathr --test   # same game, against test-progress.json beside his
+uv run pytest         # the whole suite, ~0.5s
+uv add <pkg>          # tell the user before adding any dependency
 ```
 
 `pytest` and `ruff` are not installed system-wide; they come in through `uv`.
@@ -66,7 +67,8 @@ src/mathr/
                   SPAN / Target / targets and the six fraction pools
     round.py      Round, Rules, Tally, Aim, Outcome,
                   new_round / apply / tick / dismiss / place
-  storage.py      Progress, Settings, LevelRecord; load / save / merge
+  storage.py      Progress, Settings, LevelRecord; load / save / merge,
+                  default_path(testing) — his file, or the one beside it
                   four sections: levels, facts, placements, targets
   shell/
     app.py        App: event loop, Mode, LevelScreen, three screens, the wiring
@@ -216,6 +218,15 @@ tells him to go backwards for a problem that crosses nothing. The guard is
 `max(a, b) > 10` **first**, counting on from the bigger number, which is what
 subtraction below it already does and which for `3 + 12` is the commuting said
 out loud rather than a bridge from 3.
+
+**Test mode is a flag, not an environment variable.** `--test` picks
+`default_path(testing=True)`, a sibling `test-progress.json`. An exported
+variable outlives the session, and a real round written to the test file is
+invisible: the game looks identical, and what you conclude is that his progress
+was lost. It writes a real file rather than none, because `save` is the one
+place a bug stops the record being written with nothing on screen to say so — so
+a test session must exercise it, just not against his. `App.testing` says so on
+the menu and nowhere else, because during play the two are indistinguishable.
 
 **Layout is design space.** Everything is laid out in 1280×800 and scaled into
 whatever the window actually is, because Hyprland tiles it to whatever the layout

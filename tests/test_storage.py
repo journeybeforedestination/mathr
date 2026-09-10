@@ -17,7 +17,7 @@ from mathr.domain.round import (
     place,
     tick,
 )
-from mathr.storage import LevelRecord, Progress, Settings, load, merge, save
+from mathr.storage import LevelRecord, Progress, Settings, default_path, load, merge, save
 
 
 def played(level_id="small", timed=True, corrects=0, wrongs=0, seconds=0.0, **kwargs):
@@ -260,3 +260,11 @@ def test_a_won_end_is_a_launch_though_it_has_no_clock():
     assert after.level("curling", "thirds").launches == 1
     assert after.level("curling", "thirds").practice == 0
 
+
+def test_test_mode_writes_beside_his_record_and_never_over_it(monkeypatch, tmp_path):
+    """A sibling file rather than no file at all: the save path is the one place
+    a bug stops the record being written with nothing on screen to say so, so a
+    test session has to exercise it — just not against his."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert default_path(testing=True) != default_path()
+    assert default_path(testing=True).parent == default_path().parent

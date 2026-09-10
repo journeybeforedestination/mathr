@@ -57,9 +57,16 @@ class Progress:
         return self.levels.get(f"{mode_id}/{level_id}", LevelRecord())
 
 
-def default_path() -> Path:
+def default_path(testing: bool = False) -> Path:
+    """Where progress lives, and where it lives when you are only checking.
+
+    A sibling file rather than no file at all: the save path is the one place a
+    bug stops the record being written with nothing on screen to say so, so a
+    test session has to exercise it — just not against his.
+    """
     data_home = os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-    return Path(data_home) / "mathr" / "progress.json"
+    name = "test-progress.json" if testing else "progress.json"
+    return Path(data_home) / "mathr" / name
 
 
 def load(path: Path) -> Progress:

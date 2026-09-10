@@ -401,9 +401,13 @@ def hint_caption(question) -> str | None:
 
 
 class App:
-    def __init__(self, progress_path: Path, rng: random.Random) -> None:
+    def __init__(self, progress_path: Path, rng: random.Random, testing: bool = False) -> None:
         self.progress_path = progress_path
         self.rng = rng
+        #: Said on the menu and nowhere else. A round played against the test
+        #: file looks identical to a real one, and the failure is silent in the
+        #: worst direction: you conclude his progress was lost.
+        self.testing = testing
         self.progress: Progress = load(progress_path)
         self.screen = "menu"
         self.mode = "rocket"
@@ -870,6 +874,14 @@ class App:
     def render_menu(self) -> None:
         draw.text(self.canvas, self.fonts["huge"], "mathr", (640, 96), draw.ACCENT)
         draw.text(self.canvas, self.fonts["small"], "pick a game", (640, 156), draw.DIM)
+        if self.testing:
+            draw.text(
+                self.canvas,
+                self.fonts["tiny"],
+                "test mode - progress is not his",
+                (640, 776),
+                draw.DIM,
+            )
         for mode_id, rect in CABINETS:
             dimmed = mode_id == "soon"
             screen = draw.draw_cabinet(

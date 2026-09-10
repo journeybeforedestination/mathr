@@ -3300,6 +3300,32 @@ anyone has watched him play the two.
 
 ---
 
+## Test mode
+
+`uv run mathr --test` runs the whole game against `test-progress.json`, a
+sibling of his file. `App.__init__` already took a path, so the change is
+`default_path(testing)` and a `testing` flag carried for one purpose: a line on
+the menu screen.
+
+Three decisions in it.
+
+**A flag, not an environment variable.** `default_path` already reads
+`XDG_DATA_HOME`, so `XDG_DATA_HOME=/tmp/x uv run mathr` was a working test mode
+with no code at all. Rejected because an exported variable outlives the session,
+and that is precisely how a real round gets written to the wrong file.
+
+**It writes a real file rather than nothing.** Saving is the one place a bug
+stops the record being written with no sign on screen — a `ValueError` inside
+`save` means `os.replace` never runs — so a test session has to exercise it.
+Just not against his.
+
+**It says so on the menu and nowhere else.** During play a test round is
+indistinguishable from a real one, and the failure is silent in the worst
+direction: you conclude his progress was lost. A marker on every screen
+including play was rejected as one more thing on screen while he is answering.
+
+---
+
 ## Traps
 
 **Mouse coordinates must be inverse-mapped through the design-surface scale.**
