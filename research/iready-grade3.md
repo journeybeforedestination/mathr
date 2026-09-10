@@ -248,8 +248,8 @@ makes this a layout decision either way.
 The trap, stated in advance: the football metaphor breaks. Nobody throws to the
 ⅔ yard line. Either the fractional line gets its own art on the same mechanic
 (a high-jump bar, a zip line, a tightrope), or the mode is honest that the field
-is a number line and drops the yards. Given how much of `plan.md` is spent on
-mechanic-and-metaphor agreement, this deserves the same treatment.
+is a number line and drops the yards. Given how much of this project's design
+is spent on mechanic-and-metaphor agreement, this deserves the same treatment.
 
 ### 5.2 Division, and the fact-family flip
 

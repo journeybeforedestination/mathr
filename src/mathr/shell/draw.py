@@ -564,9 +564,10 @@ def draw_cabinet(
 # The whole left column is one door he is working on all round: the intercepted
 # lines behind its glass, the combination on its face, and the dial and bolts
 # below them. It is drawn as a door rather than a readout because this is the
-# one mode with no clock and no object being built — see `plan.md`, *the maths
-# has to be the reward*. The rect names are `CODE_*`: `PANEL` is a colour, and a
-# rect of the same name silently replaced it once already.
+# one mode with no clock and no object being built — see `CLAUDE.md`, *A sixth
+# game mode*, for why that combination needed a door rather than a readout. The
+# rect names are `CODE_*`: `PANEL` is a colour, and a rect of the same name
+# silently replaced it once already.
 CODE_DOOR = pygame.Rect(16, 148, 676, 644)
 CODE_PANEL = pygame.Rect(76, 210, 548, 434)
 LOCK_ROW = pygame.Rect(76, 660, 548, 116)

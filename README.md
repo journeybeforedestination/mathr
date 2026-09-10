@@ -457,6 +457,6 @@ One runtime dependency, `pygame-ce` (never upstream `pygame` — it has no cp314
 wheel and would try to build from source). Sound is synthesized in code from
 `array.array`, so there are no asset files and numpy is not needed.
 
-- `plan.md` — why every decision is what it is, including the ones reversed later
-- `ideas.md` — what was deliberately left out, and why
+- `ideas.md` — what was deliberately left out and why, and the approaches this
+  program is not built on
 - `CLAUDE.md` — the map and the invariants, for making changes

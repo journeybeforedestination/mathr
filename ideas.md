@@ -67,7 +67,29 @@ levels unchanged, so a mode is only a renderer. Tennis is not: its clock is a
 per-rally deadline rather than a shared bank, a wrong answer costs it nothing,
 and a missed ball is a point rather than the end. Built as a pure renderer over
 the rocket's rules it would still compile, still draw, and play as a different
-game — see *The load-bearing decision* in `plan.md`. What the seam actually
+game. That is worth walking with real numbers, because it is the argument the
+next mode will want to re-run. Take `small` at 4.0 seconds a part, so a round
+opens with `seconds_left = 20.0` against a `cap` of 16.0, and drive the ball's
+position from `seconds_left / cap` the way `draw.closing` drives the saucer:
+
+1. **The serve does not move for four seconds.** `20.0 / 16.0` is above 1.0, so
+   the ball sits pinned at the opponent's baseline until the bank falls under
+   the cap. `closing` clamps that deliberately — a saucer that starts
+   off-screen is fine, a ball that hangs motionless is not.
+2. **A correct answer does not reset the rally.** Answer at t=5.0 with 15.0
+   left and `_credit` returns `max(15.0, min(15.0 + 4.0, 16.0))` — 16.0. The
+   ball retreats one sixteenth of the court and keeps coming. It never flies
+   back, so there is no rally, just a ball creeping inexorably closer.
+3. **A wrong answer removes a return he already hit.** `apply` does
+   `max(parts - 1, 0)`, so his score drops while the ball is still in the air.
+   Nothing in tennis does that.
+4. **The first ball he misses ends the match.** The bank empties, `tick` sets
+   `failed`, and there is no such thing as an opponent point — the three-point
+   cushion cannot exist.
+
+What makes it load-bearing is that **nothing fails**. It compiles, it draws,
+every existing test passes, and it plays as a different game than the one
+specified. No error says "your clock model is wrong". What the seam actually
 bought was `parts: int`: the reducer took a `Rules` bundle and gained a
 `points` counter, and neither pools, storage, nor the coordinate transform moved
 at all.
@@ -103,10 +125,11 @@ four outcomes were deleted rather than left unused. Worth keeping the two
 side by side, because the first was the design the research argued for and the
 second is the one a seven-year-old will play.
 
-The 2x2 grid is now full. A fifth mode is a layout decision first.
+The grid is three across by two down and holds five cabinets and one dark
+slot. A *seventh* is a layout decision before it is anything else.
 
 ## Adaptive difficulty
-**Built** — see *Learning feedback* in `plan.md`. The data answered the question
+**Built.** The data answered the question
 it was rejected on: not the misses (four in 105 answers, half of them typos) but
 the times. The deck is ordered by mean seconds per fact against the level's pace,
 clamped between `WEIGHT_FLOOR` and `WEIGHT_CEILING`, with an unseen fact at 1.0.
@@ -126,7 +149,7 @@ What remains is everything that needs more than one session's history:
   "done" state to explain it — a UI decision, not a policy change.
 
 ## Timed / speed modes
-**Built** — see *Time pressure* in `plan.md`. A shared bank of seconds per round,
+**Built.** A shared bank of seconds per round,
 an alien that grows as it drains, and an off switch in the menu.
 
 What remains is the softer end. Per-fact response times are now recorded, so a
@@ -137,7 +160,7 @@ would confound the answer.
 
 ## Choosing timed or untimed per level
 Raised while designing the clock and set aside: a timed/untimed choice on each
-level button, so he could drill `bridge` untimed while racing on `fives`. It
+level button, so he could drill `big` untimed while racing on `small`. It
 doubles the level-select UI and adds a decision before every single round, and
 the menu toggle already covers the case that matters (the clock is too much
 today). Revisit if he starts using the menu toggle *between* levels rather than
@@ -270,3 +293,44 @@ line. Closing that gap means a new interaction, not a new cabinet.
 ## Packaging
 Currently `uv run mathr` from the source directory. A desktop entry, or a
 standalone build, only if he wants to launch it himself.
+
+## The approaches this program is not built on
+
+Rejected before the first line was written, and kept here because they are what
+a fresh reader proposes first. Nothing below is a feature that was deferred —
+each one is a road not taken, and the reason it was not.
+
+- **A web app (React + Vite + Tailwind).** *This was the first recommendation
+  made, and it was reversed — the most likely path for a fresh context to
+  re-walk.* The argument for it is real: in a browser a part tumbling off is a
+  CSS transform and the art is resolution-independent SVG, where pygame means
+  integrating rotation per frame by hand. It loses because the choice was a
+  desktop app with local-file storage, which removes the browser's decisive
+  advantage — playing on a tablet with no dev server. What remains is
+  `node_modules` against one dependency. **Revisit only if it has to run on a
+  tablet.**
+- **Upstream `pygame`.** No cp314 wheel; it would build from source and fail.
+  Decided by a fact, not a preference. Both packages import as `pygame`, so a
+  stray one in the lockfile is invisible in the source.
+- **`tkinter`.** Present, zero dependencies, and `Canvas` + `after()` can
+  animate this. Rejected: no game loop, no sound, and manual easing anyway — the
+  dependency saved is one package.
+- **Kivy / PyQt.** Install weight and licensing complexity far beyond a
+  single-screen kid's game.
+- **numpy for sound synthesis.** Proven unnecessary: `array.array` feeds
+  `Sound(buffer=...)` directly, and the probe ran with numpy absent.
+- **A Hyprland window rule instead of design-surface scaling.** It edits the
+  user's desktop config to work around an application bug, does not survive
+  fullscreen or a different machine, and does nothing for the coordinate
+  mapping — which is the half that actually breaks silently. See *Layout is
+  design space* in `CLAUDE.md`.
+- **Sequential level unlocking.** *More* code than open access, and it would
+  make a kid who already owns bonds of five grind past them.
+- **Random fact generation.** The pools are small enough to enumerate, and
+  enumeration is both simpler and testable by assertion.
+- **Multiple-choice answers.** Trains recognition, and a smart kid
+  reverse-engineers the distractors. Typed answers force recall, which is the
+  whole point of a fluency drill.
+- **No timer at all.** Rejected for v1 on the grounds that timers cause anxiety,
+  then **overturned** once he asked for urgency. The original reasoning was not
+  wrong, which is why the clock ships with an off switch in the menu.

@@ -363,8 +363,8 @@ best-supported ideas in this document.
 
 ## 6. Where this bumps into the current architecture
 
-Noted, not proposed. Each is a real design question, and `plan.md` conventions
-say make the case before building the abstraction.
+Noted, not proposed. Each is a real design question, and `CLAUDE.md`'s
+conventions say make the case before building the abstraction.
 
 - **`Outcome` is boolean.** Modes 6 and 8 produce a *degree* of correctness
   (distance from the true position; number of valid solutions found). Either they

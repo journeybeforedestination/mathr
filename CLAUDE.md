@@ -3,10 +3,16 @@
 A desktop math-fact game for one specific second grader. `README.md` describes
 how it plays; this file is what you need to change it safely.
 
-- `plan.md` — the reasoning behind every decision, including the ones later
-  reversed. Read the relevant section **before** arguing with a design choice;
-  most of them were argued once already and the alternatives are recorded.
-- `ideas.md` — what is deliberately out of scope, and why.
+- `ideas.md` — what is deliberately out of scope and why, what was built and how
+  the original claim about it turned out, and the approaches this program is not
+  built on. Read the relevant entry **before** arguing with a design choice; most
+  of them were argued once already and the alternatives are recorded there.
+
+There was a `plan.md`. It was the pre-build plan with a section appended per
+feature, and it was deleted once its feature sections had been superseded by the
+invariants below — which are the maintained copy of the same reasoning, and were
+consistently more accurate. Plan a feature in its own scratch file, fold what
+survives into this file and `ideas.md`, and let the plan go with the branch.
 
 ## Commands
 
@@ -17,7 +23,11 @@ uv run pytest         # the whole suite, ~0.5s
 uv add <pkg>          # tell the user before adding any dependency
 ```
 
-`pytest` and `ruff` are not installed system-wide; they come in through `uv`.
+`pytest` is not installed system-wide; it comes in through `uv` as a dev
+dependency. **`ruff` is not installed at all** — not system-wide and not in the
+dev group, so `uv run ruff` fails with `Failed to spawn`. There is no formatter
+or linter in this project; match the surrounding style by hand, and note that
+lines run past 100 characters throughout `draw.py` already.
 
 ## Layering
 
@@ -46,8 +56,8 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
   says what the clock does, what a wrong answer costs, what an empty clock
   means, and whether the round stops every so often to ask for a placement.
   Tennis built as a pure renderer over `ROCKET` compiles, draws, and plays as a
-  different game — the walk-through with real numbers is in `plan.md`, *The
-  load-bearing decision*.
+  different game — the walk-through with real numbers is in `ideas.md`,
+  *A second game mode*.
 - **Pacing is a rule, so the clock is in the domain** — a pure
   `tick(round, dt)`, not a timer in the event loop. That is what makes "the bank
   cannot exceed the cap" and "zero ends the round" testable without opening a
@@ -234,6 +244,17 @@ gives. Mouse positions convert once, through `draw.to_design`, at the event
 boundary — nothing downstream may see window coordinates. Symptom if this is
 ever bypassed: clicks are accurate near the top-left and drift further out,
 which reads as "sloppy hitboxes" and never as a scaling bug.
+
+The concrete failure, because it is worth being able to recognise: lay the
+keypad out at absolute coordinates with the "7" key at `(980, 520)`; Hyprland
+tiles the window to 960×1040 instead; the keypad's bottom row is off-screen
+entirely; he clicks where "7" *appears* to be, `pygame.mouse.get_pos()` returns
+window coordinates, the hit-test compares them against 1280×800 rectangles, and
+he hits "4" — or nothing. It presents as "the buttons are wrong", which names
+nothing, and it cannot be fixed by nudging coordinates because the offset
+changes with every window size. This is why the transform landed before any
+rocket art: retrofitting it means touching every draw call and every click
+site.
 
 **The target is an *item*, not a position on the line.** `Rules.targets_from_deck`
 picks between the two, and getting it wrong is arithmetic rather than taste.
@@ -574,7 +595,7 @@ is why `Mode.clips` maps outcomes to clip names explicitly instead of using
 no error anywhere.
 
 **Dimmed buttons must not hover.** `draw_card` takes `dimmed` and ignores
-`hovered` when set, and the click handlers never see `SOON_BUTTONS`. A
+`hovered` when set, and the click handlers never see `LevelScreen.soon`. A
 coming-soon row that lights up under the cursor and does nothing reads as
 broken, not as unfinished.
 
@@ -614,7 +635,24 @@ in `app.py`), so a fourth row needs a layout decision, not just an id in a
 tuple. The addition column has one free slot; the other two are full. Update
 `test_pool_sizes` — the `everything` total moves too.
 
-**A sixth game mode.** The 3x2 grid has exactly one slot left, the `"soon"` one
+**A sixth game mode. The maths has to *be* the reward.** Replay Booth was built
+to spec, passed 200 tests, and was not a game — the one failure here that cost a
+rewrite, and one that cannot be re-derived from the working code because the
+working code is the fix. Compare the cabinets by what *moves* when he is right:
+the rocket bolts on a part, tennis returns a ball, football walks a marker up a
+field he can see, and the booth showed `0 / 10 calls`. Worse, the feedback ran
+backwards — a *wrong* call raised the two-route number line, the richest picture
+in the game, while a *right* call played a whistle and advanced. The punishment
+was more interesting than the reward, which for a seven-year-old is the whole
+problem. Removing its clock had been correct (the mode measures reasoning faster
+than his arithmetic, and a clock suppresses what it measures) but the clock was
+the only thing carrying tension, and nothing replaced it. The fix was not art on
+top: it was making the answers **accumulate into something** — a combination,
+kept in a cell he can see beside the cells still empty. So before the dials
+below, ask what grows on screen when he is right, and whether it is more
+interesting than what happens when he is wrong.
+
+The 3x2 grid has exactly one slot left, the `"soon"` one
 — a *seventh* cabinet is a layout decision before it is anything else.
 Otherwise: add a `Rules` to `domain/round.py` and a `Mode` to `MODES` in
 `app.py` (title, clip map, a `draw.Layout`, a `LevelScreen`, noun and what a
