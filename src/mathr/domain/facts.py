@@ -81,6 +81,16 @@ class Fact:
             # answer, so the renderer captions it — see `draw_number_line`.
             return Strategy(0, (self.b,) * self.result)
         if self.op == "+":
+            if max(self.a, self.b) > 10:
+                # An operand already past ten has no ten to bridge to, and
+                # without this the branch below fires on `12 + 3` and draws a
+                # hop *back* to ten and five forward. It lands on 15, so
+                # nothing raises and the line draws — it just tells him to go
+                # backwards for a problem that crosses nothing. Hold the
+                # bigger number and count on, which is what subtraction below
+                # already does, and which for `3 + 12` is the commuting said
+                # out loud rather than a bridge from 3.
+                return Strategy(max(self.a, self.b), (min(self.a, self.b),))
             if self.result > 10:
                 # Bridging is the two-step move the level exists to teach, so
                 # it is drawn as two hops rather than one long one.
@@ -427,27 +437,37 @@ def targets(pool: tuple[Target, ...], rng: random.Random) -> tuple[Target, ...]:
     return tuple(rng.sample(pool, len(pool)))
 
 
-def _from_pair(a: int, b: int) -> tuple[Fact, ...]:
-    """The four questions a number bond answers.
+def _add_pair(a: int, b: int) -> tuple[Fact, ...]:
+    """The two questions an addition pair answers.
 
-    The missing-addend forms are the point: `3 + ? = 5` *is* the bond, and it
-    is the mental move that bridging ten depends on.
+    The missing-addend form is the point: `3 + ? = 5` *is* the bond, and it is
+    the mental move that bridging ten depends on.
     """
-    total = a + b
     return (
-        Fact(a, "+", b, total, "result"),
-        Fact(a, "+", b, total, "b"),
-        Fact(total, "-", a, b, "result"),
-        Fact(total, "-", a, b, "b"),
+        Fact(a, "+", b, a + b, "result"),
+        Fact(a, "+", b, a + b, "b"),
+    )
+
+
+def _sub_pair(a: int, b: int) -> tuple[Fact, ...]:
+    """The two questions `a - b` answers, as written.
+
+    Separate from `_add_pair` rather than derived alongside it, because the
+    addition levels are split on the size of the numbers *as written*: `7 + 7`
+    is two small numbers and `14 - 7` is a big one meeting a small one, so the
+    bond they share sends its two halves to different levels.
+    """
+    return (
+        Fact(a, "-", b, a - b, "result"),
+        Fact(a, "-", b, a - b, "b"),
     )
 
 
 def _times_pair(a: int, b: int) -> tuple[Fact, ...]:
     """The two questions a times fact answers.
 
-    Sibling of `_from_pair` rather than a parameterization of it: the two extra
-    forms that pair yields are subtraction, and the multiplication equivalents
-    are division, which is deliberately not built.
+    Sibling of `_add_pair` rather than a parameterization of it: the two forms
+    it leaves out are division, which lives in its own column.
     """
     return (
         Fact(a, "×", b, a * b, "result"),
@@ -469,7 +489,7 @@ def _divide_pair(a: int, b: int) -> tuple[Fact, ...]:
     )
 
 
-def _pool(pairs: tuple[tuple[int, int], ...], forms=_from_pair) -> tuple[Fact, ...]:
+def _pool(pairs: tuple[tuple[int, int], ...], forms=_add_pair) -> tuple[Fact, ...]:
     return tuple(fact for pair in pairs for fact in forms(*pair))
 
 
@@ -499,20 +519,57 @@ class Level:
     """The pace one part has to be earned at. Every other clock constant is
     derived from this, so a level is retuned by changing one number.
 
-    Bridging ten is a two-step move (15 - 7 is 15 - 5 - 2), so it gets longer
-    than the recall levels rather than the same bar applied to a harder task.
+    A level holding bigger numbers gets longer rather than the same bar applied
+    to a harder task. `small` sits between the two: it spans `1 + 1` and
+    `9 + 8` in one pool, so its pace is a compromise the weighting cannot fix —
+    ordering says *which* fact comes up, never what one is worth. If he fails
+    it while answering most of it instantly, split the level rather than shave
+    this number. `failures` in progress.json is what says so.
     """
 
+
+#: The ceiling on a big number. Both addition levels stop here: past twenty the
+#: number line has to span a width one small hop is invisible on, and a second
+#: operand above ten is regrouping — a different skill, kept in `ideas.md`.
+TEEN_MAX = 20
+
+#: Addition is split on the two numbers **as written**, never on the answer, so
+#: `7 + 7 = 14` is small and `14 - 7 = 7` is not. That is why `_add_pair` and
+#: `_sub_pair` are separate: one bond sends its addition forms to one level and
+#: its subtraction forms to the other the moment its total passes ten.
+_SMALL = tuple(
+    # `0 + 0` is the one pair left out: a free mark that measures nothing and
+    # inflates the record, the same reason `_divided` starts at one. Zero
+    # *addends* stay — `0 + 5` is a real thing to get wrong.
+    (a, b)
+    for a in range(11)
+    for b in range(11)
+    if (a, b) != (0, 0)
+)
+
+#: Exactly one operand above ten. Written as a difference of the two tests
+#: rather than `or`, so a pair like `(12, 13)` is excluded by construction.
+_BIG_ADD = tuple(
+    (a, b)
+    for a in range(TEEN_MAX + 1)
+    for b in range(TEEN_MAX + 1)
+    if (a > 10) != (b > 10) and a + b <= TEEN_MAX
+)
 
 #: `fives_times` and the rest cannot reuse the addition ids: a level id keys a
 #: LevelRecord in progress.json.
 _ADDITION: tuple[Level, ...] = (
-    Level("fives", "Make Five", _pool(tuple((a, 5 - a) for a in range(6))), 3.0),
-    Level("tens", "Make Ten", _pool(tuple((a, 10 - a) for a in range(11))), 3.0),
     Level(
-        "bridge",
-        "Over the Ten",
-        _pool(tuple((a, b) for a in range(1, 10) for b in range(1, 10) if a + b > 10)),
+        "small",
+        "Ten and Below",
+        _pool(_SMALL) + _pool(tuple((a, b) for a in range(11) for b in range(a + 1)), _sub_pair),
+        4.0,
+    ),
+    Level(
+        "big",
+        "Above Ten",
+        _pool(_BIG_ADD)
+        + _pool(tuple((a, b) for a in range(11, TEEN_MAX + 1) for b in range(11)), _sub_pair),
         5.0,
     ),
 )

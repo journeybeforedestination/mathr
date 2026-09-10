@@ -12,7 +12,7 @@ how it plays; this file is what you need to change it safely.
 
 ```sh
 uv run mathr      # play
-uv run pytest     # the whole suite, ~0.1s
+uv run pytest     # the whole suite, ~0.5s
 uv add <pkg>      # tell the user before adding any dependency
 ```
 
@@ -61,7 +61,7 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
-    facts.py      Fact, Question, Strategy, Level, the ten enumerated pools,
+    facts.py      Fact, Question, Strategy, Level, the eight enumerated pools,
                   Side / Sentence / sentences: the code panel's derived deck,
                   SPAN / Target / targets and the six fraction pools
     round.py      Round, Rules, Tally, Aim, Outcome,
@@ -76,7 +76,8 @@ src/mathr/
                   buttons, number line, Layout, the transform
     audio.py      seventeen synthesized clips, no asset files
 tests/
-  test_facts.py   pool contents, key stability, both orientations
+  test_facts.py   pool contents, key stability, both orientations, and where
+                  the addition split falls
   test_round.py   parts, re-queue, both win conditions
   test_clock.py   the time bank and the rally deadline
   test_place.py   the placement: when it is due, what it costs, what it stops
@@ -95,14 +96,25 @@ shows the whole true equation. `shell/draw.draw_number_line` owns the span and
 every degenerate shape those numbers really produce: a jump of zero (`0 + 5`),
 an empty jump list (`2 × 0`), and the ten equal jumps of `10 × 10`.
 
-`domain/facts.py` builds each addition level from one rule: each number-bond
-pair yields four questions (`a+b=?`, `a+?=c`, `c−a=?`, `c−?=b`). A times pair
-yields two (`a×b=?`, `a×?=c`); the other two are division, and they live in
-their own column via `_divide_pair`, which `_divided` draws from `range(1, 11)`
-rather than `range(11)` — `0 ÷ ? = 0` is true of every divisor, so the zero pair
-would sit in the deck being marked wrong forever. Pools are enumerated, not
-generated — 24 / 44 / 144 / 22 / 22 / 22 / 20 / 20 / 20, and `everything` is
-their concatenation (338), pinned by `test_pool_sizes`.
+**The two addition levels split on the two numbers *as written*, never on the
+answer.** `7 + 7 = 14` is two small numbers and belongs to `small`; `14 − 7 = 7`
+is a big number meeting a small one and belongs to `big`. So one number bond
+sends its addition forms to one level and its subtraction forms to the other the
+moment its total passes ten — which is exactly why `_add_pair` and `_sub_pair`
+are two functions and not one `_from_pair` yielding four. Merge them back and
+`big` silently acquires `4 + 9` or `small` acquires `13 − 4`, and the only
+symptom is a card asking questions the card below it is for. `big` holds
+*exactly one* number past ten (`(a > 10) != (b > 10)`, not `or`): two of them is
+regrouping, which is a different skill and is in `ideas.md`.
+
+A times pair yields two questions (`a×b=?`, `a×?=c`); the other two are
+division, and they live in their own column via `_divide_pair`, which `_divided`
+draws from `range(1, 11)` rather than `range(11)` — `0 ÷ ? = 0` is true of every
+divisor, so the zero pair would sit in the deck being marked wrong forever.
+`_SMALL` leaves out `(0, 0)` for the same reason in the same spirit: `0 + 0 = ?`
+is a free mark that measures nothing and inflates the record. Zero *addends*
+stay. Pools are enumerated, not generated — 372 / 440 / 22 / 22 / 22 / 20 / 20 /
+20, and `everything` is their concatenation (938), pinned by `test_pool_sizes`.
 
 The fraction pools are enumerated the same way — 4 / 7 / 13 / 18 / 14, and
 `fractions` is their concatenation (56) — and they live in `FRACTION_LEVELS`,
@@ -165,7 +177,8 @@ These are the dials, and they are meant to be turned after watching him play.
 | `SHEET` / `SHEET_EDGE` | `shell/draw.py` | rect / 80 | the ice, and the room outside the line for its labels |
 | `STONE_RADIUS` / `STONE_ROW` | `shell/draw.py` | 17 / 36 | a stone, and how far above the line the next one on its mark stands |
 | `SWEEPER_HEIGHT` | `shell/draw.py` | 76 | the figure at the hack, in design pixels |
-| `Level.seconds_per_part` | `domain/facts.py` | 3 / 3 / 5 / 5 | pace, per level |
+| `TEEN_MAX` | `domain/facts.py` | 20 | ceiling on a big number in `big` |
+| `Level.seconds_per_part` | `domain/facts.py` | 4 / 5 / 5 | pace, per level |
 
 `seconds_per_part` is the only per-level number; start and cap derive from it
 *and from the mode's `Rules`*, so retuning a level is one edit and nothing needs
@@ -193,6 +206,16 @@ where the ball is; seed a new volley from it, never from the clock, or a shot
 struck mid-flight jumps.
 
 ## Invariants that break silently
+
+**Bridging needs a ten to bridge to.** `Fact.strategy`'s addition branch fired
+on `result > 10` alone, which quietly assumed both operands were under ten. They
+are not since `big` arrived: `12 + 3` drew `Strategy(12, (-2, 5))` — a hop
+*back* to ten and five forward. It lands on 15, so nothing raises and
+`draw_number_line` scales to it and draws a perfectly tidy picture; it just
+tells him to go backwards for a problem that crosses nothing. The guard is
+`max(a, b) > 10` **first**, counting on from the bigger number, which is what
+subtraction below it already does and which for `3 + 12` is the commuting said
+out loud rather than a bridge from 3.
 
 **Layout is design space.** Everything is laid out in 1280×800 and scaled into
 whatever the window actually is, because Hyprland tiles it to whatever the layout
@@ -573,10 +596,12 @@ card, and a fifth column is a layout decision. Update `test_fraction_pool_sizes`
 
 **A new level.** Add a `Level` to `_ADDITION` or `_MULTIPLY` in
 `domain/facts.py` with its pair list and `seconds_per_part`; `_pool` does the
-rest, and `everything` picks it up because it is derived. Then place it: the
-level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD` in
-`app.py`), so a fourth row needs a layout decision, not just an id in a tuple.
-Update `test_pool_sizes` — the `everything` total moves too.
+rest — pass `_sub_pair` for a pool of subtractions, since the default builds
+additions only — and `everything` picks it up because it is derived. Then place
+it: the level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD`
+in `app.py`), so a fourth row needs a layout decision, not just an id in a
+tuple. The addition column has one free slot; the other two are full. Update
+`test_pool_sizes` — the `everything` total moves too.
 
 **A sixth game mode.** The 3x2 grid has exactly one slot left, the `"soon"` one
 — a *seventh* cabinet is a layout decision before it is anything else.

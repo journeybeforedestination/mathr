@@ -7,6 +7,7 @@ from mathr.domain.facts import (
     LEVELS,
     LEVELS_BY_ID,
     SPAN,
+    TEEN_MAX,
     Question,
     Strategy,
     Target,
@@ -46,28 +47,27 @@ def test_exactly_one_blank_in_either_orientation():
 
 
 def test_flipping_moves_the_equals_sign():
-    fact = LEVELS_BY_ID["fives"].facts[0]
-    assert Question(fact, False).prompt == "0 + 5 = ?"
-    assert Question(fact, True).prompt == "? = 0 + 5"
+    fact = LEVELS_BY_ID["small"].facts[0]
+    assert Question(fact, False).prompt == "0 + 1 = ?"
+    assert Question(fact, True).prompt == "? = 0 + 1"
 
 
 def test_a_deck_carries_both_orientations():
-    deck = shuffled(LEVELS_BY_ID["bridge"].facts, random.Random(3))
+    deck = shuffled(LEVELS_BY_ID["big"].facts, random.Random(3))
     assert {question.flipped for question in deck} == {False, True}
 
 
 def test_pool_sizes():
     assert {level.id: len(level.facts) for level in LEVELS} == {
-        "fives": 24,
-        "tens": 44,
-        "bridge": 144,
+        "small": 372,
+        "big": 440,
         "twos": 22,
         "fives_times": 22,
         "tens_times": 22,
         "divide_two": 20,
         "divide_five": 20,
         "divide_ten": 20,
-        "everything": 338,
+        "everything": 938,
     }
 
 
@@ -84,7 +84,7 @@ def test_both_blank_forms_in_every_pool():
 
 
 def test_each_topic_asks_its_own_operations():
-    for level_id in ("fives", "tens", "bridge"):
+    for level_id in ("small", "big"):
         assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"+", "-"}
     for level_id in ("twos", "fives_times", "tens_times"):
         assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"×"}
@@ -97,17 +97,43 @@ def test_keys_are_unique_and_stable():
     for level in LEVELS:
         keys = [fact.key for fact in level.facts]
         assert len(keys) == len(set(keys))
-    assert LEVELS_BY_ID["fives"].facts[1].key == "0+5=5@b"
+    # Found rather than indexed: the key is the storage format that outlives
+    # this code, so it is pinned by content. Its position in a pool is not — it
+    # moved when Make Five and Make Ten became one level, and the tallies
+    # already recorded under this key carried across untouched, which is the
+    # whole reason the key is derived from the equation.
+    fact = next(
+        f for f in LEVELS_BY_ID["small"].facts if (f.a, f.op, f.b, f.blank) == (0, "+", 5, "b")
+    )
+    assert fact.key == "0+5=5@b"
     assert LEVELS_BY_ID["twos"].facts[6].key == "2×3=6@result"
     assert LEVELS_BY_ID["divide_two"].facts[1].key == "2÷2=1@b"
 
 
-def test_bridge_facts_cross_ten():
-    for fact in LEVELS_BY_ID["bridge"].facts:
-        if fact.op == "+":
-            assert fact.a < 10 and fact.b < 10 and fact.result > 10
-        else:
-            assert 10 < fact.a <= 18 and fact.b < 10
+def test_the_addition_levels_split_on_the_numbers_as_written():
+    """Never on the answer. `7 + 7 = 14` is two small numbers and `14 - 7 = 7`
+    is a big one meeting a small one, so one bond's four forms land in two
+    different levels — which is why `_add_pair` and `_sub_pair` are separate."""
+    for fact in LEVELS_BY_ID["small"].facts:
+        assert fact.a <= 10 and fact.b <= 10, fact.key
+    for fact in LEVELS_BY_ID["big"].facts:
+        assert (fact.a > 10) != (fact.b > 10), fact.key
+        assert fact.a <= TEEN_MAX and fact.b <= TEEN_MAX, fact.key
+
+
+def test_a_bond_that_passes_ten_lands_in_both_levels():
+    small = {fact.key for fact in LEVELS_BY_ID["small"].facts}
+    big = {fact.key for fact in LEVELS_BY_ID["big"].facts}
+    assert "7+7=14@result" in small and "14-7=7@result" in big
+    assert not small & big
+
+
+def test_no_addition_by_nought_and_nought():
+    """A free mark that measures nothing and inflates the record, the same
+    reason `_divided` starts at one. Zero *addends* stay: `0 + 5` is a real
+    thing to get wrong."""
+    assert "0+0=0@result" not in {fact.key for fact in LEVELS_BY_ID["small"].facts}
+    assert "0+5=5@result" in {fact.key for fact in LEVELS_BY_ID["small"].facts}
 
 
 def test_times_tables_run_to_ten():
@@ -152,17 +178,32 @@ def test_no_division_by_nought():
 
 
 def test_a_bridging_fact_stops_at_ten():
-    for fact in LEVELS_BY_ID["bridge"].facts:
+    """Only where there is a ten to stop at: both numbers under it, answer over."""
+    for fact in LEVELS_BY_ID["small"].facts:
+        if fact.result <= 10 or max(fact.a, fact.b) > 10:
+            continue
         strategy = fact.strategy
         assert len(strategy.jumps) == 2, fact.key
         assert strategy.start + strategy.jumps[0] == 10, fact.key
 
 
+def test_a_fact_past_ten_counts_on_from_the_bigger_number():
+    """`12 + 3` has no ten to bridge to. The bridging branch fired on it anyway
+    until `strategy` guarded the operands, drawing a hop *back* to ten and five
+    forward: it still lands on 15, so nothing raised and the line still drew —
+    it just told him to go backwards for a problem that crosses nothing."""
+    fact = next(f for f in LEVELS_BY_ID["big"].facts if (f.a, f.op, f.b) == (12, "+", 3))
+    assert fact.strategy == Strategy(12, (3,))
+    # And from the bigger one whichever side it is written on, which is the
+    # commuting said out loud rather than a bridge from 3.
+    commuted = next(f for f in LEVELS_BY_ID["big"].facts if (f.a, f.op, f.b) == (3, "+", 12))
+    assert commuted.strategy == Strategy(12, (3,))
+
+
 def test_a_bond_is_drawn_whole():
-    """Make Five and Make Ten are about the pair, so the line starts at nought
+    """A fact wholly under ten is about the pair, so the line starts at nought
     and shows both parts rather than counting on from one of them."""
-    assert LEVELS_BY_ID["tens"].facts[0].strategy.jumps == (0, 10)
-    fact = next(f for f in LEVELS_BY_ID["fives"].facts if (f.a, f.op) == (3, "+"))
+    fact = next(f for f in LEVELS_BY_ID["small"].facts if (f.a, f.op, f.b) == (3, "+", 2))
     assert fact.strategy == Strategy(0, (3, 2))
 
 
@@ -185,7 +226,7 @@ def test_the_worked_examples():
 
 
 def test_orientation_does_not_change_the_route():
-    fact = LEVELS_BY_ID["bridge"].facts[0]
+    fact = LEVELS_BY_ID["big"].facts[0]
     assert Question(fact, True).strategy == Question(fact, False).strategy == fact.strategy
 
 

@@ -124,7 +124,7 @@ def level_screen(columns, titles, tall: str | None = None, soon: str | None = No
 
 ARITHMETIC = level_screen(
     (
-        ("fives", "tens", "bridge"),
+        ("small", "big"),
         ("twos", "fives_times", "tens_times"),
         ("divide_two", "divide_five", "divide_ten"),
     ),

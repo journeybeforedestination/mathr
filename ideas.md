@@ -22,6 +22,20 @@ rather than only wrong. The slow-but-correct fact is the one worth drilling and
 the one a right/wrong count cannot see.
 
 ## More levels
+- **Doubles as its own level.** `1+1` through `10+10` and their subtractions.
+  There is a free slot in the addition column waiting for it, and the content is
+  a one-line pair list. Deferred because it is a third addition level proposed
+  before anyone has watched him play the two that replaced the three — and
+  because `small` and `big` between them already ask every double up to
+  `10 + 10`. What a Doubles card would add is *grouping* them, so the pattern is
+  visible; whether that is worth a card is a question for `facts` in
+  `progress.json` once there are enough answers under `7+7=14@result` and its
+  neighbours to compare.
+- **Bridging to the next ten.** `Fact.strategy` counts on from the bigger number
+  for anything with an operand past ten, so `17 + 5` draws one hop of five.
+  Drawing it as `17 +3 +2` is arguably the better strategy at that range, but it
+  is a new mental move to teach and `12 + 3` needs the single-hop picture
+  regardless. Watch him read one first.
 - **The rest of the times tables** — 3s, 4s, 6s, 7s, 8s, 9s, and their divisions.
   `_times` and `_divided` already generate them from a single number, so the
   content is free; the cost is entirely the level screen, which is full at twelve

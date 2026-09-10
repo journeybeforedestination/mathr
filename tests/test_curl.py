@@ -114,7 +114,7 @@ def test_an_end_can_be_lost_so_a_win_is_a_win():
     """`storage._fold` asks `losable`: without this a perfect end folds to
     practice forever and the level card never shows one."""
     assert end().losable
-    untimed_rocket = new_round(LEVELS_BY_ID["fives"], random.Random(0), timed=False, rules=ROCKET)
+    untimed_rocket = new_round(LEVELS_BY_ID["small"], random.Random(0), timed=False, rules=ROCKET)
     assert not untimed_rocket.losable
 
 
@@ -153,7 +153,7 @@ def test_a_football_round_still_has_to_run_the_length_of_the_line():
 
     with pytest.raises(ValueError):
         new_round(
-            LEVELS_BY_ID["fives"], random.Random(0), rules=_replace(FOOTBALL, target=10)
+            LEVELS_BY_ID["small"], random.Random(0), rules=_replace(FOOTBALL, target=10)
         )
 
 

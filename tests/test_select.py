@@ -5,7 +5,7 @@ import random
 from mathr.domain.facts import LEVELS_BY_ID, shuffled
 from mathr.domain.round import WEIGHT_CEILING, Tally, _weights, new_round
 
-LEVEL = LEVELS_BY_ID["bridge"]  # 5.0 seconds a part
+LEVEL = LEVELS_BY_ID["big"]  # 5.0 seconds a part
 
 
 def keys(level=LEVEL):

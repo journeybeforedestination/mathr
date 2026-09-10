@@ -31,7 +31,7 @@ from mathr.domain.facts import LEVELS_BY_ID
 # position on it and a catch on the 27 spots the ball on the 27.
 
 
-def drive(level_id="fives", timed=True):
+def drive(level_id="small", timed=True):
     return new_round(
         LEVELS_BY_ID[level_id],
         random.Random(0),
@@ -310,7 +310,7 @@ def test_an_untimed_drive_places_but_never_lapses():
 
 
 def test_a_mode_without_placements_never_asks_for_one():
-    rocket = new_round(LEVELS_BY_ID["fives"], random.Random(0))
+    rocket = new_round(LEVELS_BY_ID["small"], random.Random(0))
     assert rocket.placing is None and rocket.gains == ()
     after, _ = right(rocket)
     assert after.placing is None and after.pending is None

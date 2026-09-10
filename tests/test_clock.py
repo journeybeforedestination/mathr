@@ -22,7 +22,7 @@ from mathr.domain.round import (
 )
 
 
-def started(level_id="fives", timed=True):
+def started(level_id="small", timed=True):
     return new_round(LEVELS_BY_ID[level_id], random.Random(0), timed=timed)
 
 
@@ -50,9 +50,9 @@ def test_start_and_cap_derive_from_the_level_under_either_rule_set():
 
 
 def test_start_and_cap_scale_with_the_level():
-    fives, bridge = started("fives"), started("bridge")
-    assert (fives.seconds_left, fives.cap) == (15.0, 12.0)
-    assert (bridge.seconds_left, bridge.cap) == (25.0, 20.0)
+    small, big = started("small"), started("big")
+    assert (small.seconds_left, small.cap) == (20.0, 16.0)
+    assert (big.seconds_left, big.cap) == (25.0, 20.0)
     for level in LEVELS:
         round_ = started(level.id)
         assert round_.seconds_left == GRACE_PARTS * level.seconds_per_part
@@ -61,26 +61,26 @@ def test_start_and_cap_scale_with_the_level():
 
 def test_the_bank_drains_in_real_time():
     round_, outcome = tick(started(), 2.0)
-    assert round_.seconds_left == pytest.approx(13.0)
+    assert round_.seconds_left == pytest.approx(18.0)
     assert outcome is None
 
 
 def test_a_correct_answer_credits_one_part_of_time():
-    round_, _ = tick(started(), 6.0)  # 9.0 left, below the 12s cap
+    round_, _ = tick(started(), 9.0)  # 11.0 left, far enough below the 16s cap
     after, _ = right(round_)
-    assert after.seconds_left == pytest.approx(12.0)
+    assert after.seconds_left == pytest.approx(15.0)
 
 
 def test_credit_never_exceeds_the_cap():
-    round_, _ = tick(started(), 5.0)  # 10.0 left
+    round_, _ = tick(started(), 5.0)  # 15.0 left
     after, _ = right(round_)
     assert after.seconds_left == pytest.approx(after.cap)
 
 
 def test_credit_never_pushes_the_bank_down_during_grace():
-    round_, _ = tick(started(), 1.0)  # 14.0 left, still above the cap
+    round_, _ = tick(started(), 1.0)  # 19.0 left, still above the cap
     after, _ = right(round_)
-    assert after.seconds_left == pytest.approx(14.0)
+    assert after.seconds_left == pytest.approx(19.0)
 
 
 def test_a_wrong_answer_costs_a_part_but_no_extra_time():
@@ -91,7 +91,7 @@ def test_a_wrong_answer_costs_a_part_but_no_extra_time():
 
 
 def test_the_bank_empties_into_an_abduction():
-    round_, outcome = tick(started(), 15.0)
+    round_, outcome = tick(started(), 20.0)
     assert outcome is Outcome.LOST
     assert round_.failed and round_.seconds_left == 0.0
     assert not round_.launched
@@ -167,7 +167,7 @@ def test_elapsed_tracks_the_whole_round():
 # --- the rally deadline -----------------------------------------------------
 
 
-def rally(level_id="tens"):
+def rally(level_id="small"):
     return new_round(LEVELS_BY_ID[level_id], random.Random(0), rules=TENNIS)
 
 
@@ -222,7 +222,7 @@ def test_a_wrong_answer_leaves_the_ball_in_the_air():
 
 def test_a_round_with_lives_cannot_be_untimed():
     with pytest.raises(ValueError):
-        new_round(LEVELS_BY_ID["tens"], random.Random(0), timed=False, rules=TENNIS)
+        new_round(LEVELS_BY_ID["small"], random.Random(0), timed=False, rules=TENNIS)
 
 
 # --- the hint stops every clock ---------------------------------------------

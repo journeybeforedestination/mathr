@@ -3184,6 +3184,122 @@ geometry. `research/iready-grade3.md` is the argument behind each.
 
 ---
 
+## Addition, resplit: ten and below, above ten
+
+The three addition levels were `fives`, `tens` and `bridge` — bonds of five,
+bonds of ten, and crossing ten. Enumerating what that actually covered was the
+whole of the argument: of the 66 pairs summing to ten or less, exactly 17 were
+asked, the ones totalling precisely 5 or 10. `2 + 2` was in no level in the
+game. Neither was `1 + 1`, `3 + 4` or `6 + 2`. `bridge` then jumped to sums of
+11–18. The gap was not a corner of the content, it was most of it.
+
+### The split is on the operands, not the sum
+
+Two levels replace the three, and the rule is **the two numbers as written**:
+
+| Level | Rule | Facts |
+|---|---|---|
+| `small` — Ten and Below | both operands ≤ 10 | 372 |
+| `big` — Above Ten | exactly one operand 11–20, the other ≤ 10 | 440 |
+
+So `7 + 7 = 14` is small — two small numbers — and `14 − 7 = 7` is big, because
+14 is written in it. `12 + 3` and `13 − 4` are big. The answer never decides.
+
+The alternative was splitting on the sum, which is what "over the ten" always
+meant, and it was rejected because it puts `7 + 7` and `9 + 8` in the same level
+as `12 + 3` while leaving `2 + 2` nowhere: it sorts by how hard the answer is,
+when what he is looking at is the question.
+
+**The structural consequence is the thing to remember.** `_from_pair` yielded
+four facts from one number bond — two addition, two subtraction — and under this
+rule those four no longer belong together. The pair `(7, 7)` sends `7 + 7 = 14`
+to `small` and `14 − 7 = 7` to `big`; `(4, 9)` sends `4 + 9 = 13` one way and
+`13 − 4 = 9` the other. So it became `_add_pair` and `_sub_pair`, and each level
+composes the pairs it wants from each. Merging them back is the silent failure:
+`big` acquires `4 + 9`, or `small` acquires `13 − 4`, and the only symptom is a
+card asking the questions the card below it is for.
+
+`big` holds *exactly one* number past ten — written `(a > 10) != (b > 10)`, not
+`or`. Two of them is `18 − 13`, which is regrouping: a different skill, already
+logged in `ideas.md`, and one that would put a picture of two long hops in front
+of him for a fact he should be decomposing. `TEEN_MAX` is 20 for the same reason
+plus a drawing one: past twenty the number line spans a width a hop of three is
+invisible on.
+
+`(0, 0)` is the one pair left out of `small`. `0 + 0 = ?` is a free mark that
+measures nothing and inflates the record — the same judgement `_divided` makes
+by starting at one, and the same one that keeps `0/b` out of the curling deck.
+Zero *addends* stay: `0 + 5` is a real thing to get wrong, and it was already
+being asked.
+
+### The bridging picture had a latent bug, and `big` triggered it
+
+`Fact.strategy` bridged whenever `result > 10`, which silently assumed the first
+operand was under ten. With `big` in the game it is not:
+
+```
+12 + 3 = ?   ->  Strategy(start=12, jumps=(-2, 5))
+```
+
+That lands on 15. Nothing raises, `draw_number_line` scales to the range and
+draws a tidy two-hop picture — it just tells him to go *backwards* to ten and
+then forward five, for a problem that crosses nothing. The guard is
+`max(a, b) > 10` tested **before** the bridging branch, returning
+`Strategy(bigger, (smaller,))`: hold the big number and count on, which is
+exactly what the subtraction branch below it already does. Taking the bigger
+number whichever side it is written on also makes `3 + 12` draw as `12 + 3`,
+which is the commuting said out loud rather than a bridge from 3.
+
+Rejected: bridging *upward* to the next ten, so `17 + 5` draws `17 +3 +2`. It is
+correct and probably the better strategy at this range, but it is a new mental
+move to teach, and `12 + 3` — which crosses nothing — still needs the single-hop
+fallback anyway. Revisit after watching him read one.
+
+### What was not broken
+
+Nothing. `Fact.key` is derived from the equation, so every bond already drilled
+under `fives` and `tens` arrives in `small` with its tallies intact and its deck
+weight already earned — the level is smart from the first round rather than the
+tenth. Only the `rocket/fives`-shaped rows in `levels` go stale, and they are
+left alone: dead rows nothing reads, costing nothing.
+
+Two alternatives were rejected. **Filtering unknown level ids on load** would
+tidy the file at the cost of an import of the level table inside `storage.py`
+and a new failure mode where a typo'd id silently erases a real record.
+**Starting the file fresh** was explicitly on the table and is the worse trade:
+the per-fact tallies are the one thing in there that cannot be reconstructed.
+
+`test_a_file_from_before_the_clock_still_loads` deliberately keeps `fives` as
+its level id. A v1 file predates this change, so its dead rows are exactly what
+that test should be feeding in.
+
+### Pacing
+
+`seconds_per_part` is 4.0 for `small` and 5.0 for `big`. The bond levels were
+3.0, but `small` now holds `1 + 1` and `9 + 8` in one pool, so 3.0 was too sharp
+at its hard end and 5.0 would have made every level in the game 5.0 — at which
+point the per-level dial is a constant and
+`test_start_and_cap_scale_with_the_level` stops testing anything. This is a
+guess, and the number that answers it is `failures` per level in
+`progress.json`.
+
+The cost of merging the levels, stated plainly: one pace now serves a pool
+spanning `1 + 1` to `9 + 8`. The deck weighting orders *which* facts come up, not
+how long each is worth. If he starts failing `small` while answering most of it
+instantly, the honest fix is splitting it again — not shaving the constant.
+
+### The level screen
+
+The addition column holds two cards where the other two hold three, and the
+fourth column keeps the tall *Everything* card and the dimmed *Tricky Facts*
+slot. `level_screen` enumerates each column independently, so a short column
+needed no code. The free slot is left free rather than filled: *Doubles* was
+considered for it — `6 + 6` and `8 + 8` exist today only inside `big` as things
+to bridge — and deferred, because it is a third addition level proposed before
+anyone has watched him play the two.
+
+---
+
 ## Traps
 
 **Mouse coordinates must be inverse-mapped through the design-surface scale.**

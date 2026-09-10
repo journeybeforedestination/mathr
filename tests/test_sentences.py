@@ -111,5 +111,5 @@ def test_most_lines_are_relational():
 def test_both_sides_lines_reach_the_addition_pools():
     """The purest shape: two expressions, and neither can be read off without
     the relation between them."""
-    deck = sentences(LEVELS_BY_ID["tens"].facts, random.Random(1))
+    deck = sentences(LEVELS_BY_ID["small"].facts, random.Random(1))
     assert any(line.left.op is not None and line.right.op != "+" for line in deck)

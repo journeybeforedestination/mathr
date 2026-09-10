@@ -20,7 +20,7 @@ from mathr.domain.round import (
 from mathr.storage import LevelRecord, Progress, Settings, load, merge, save
 
 
-def played(level_id="fives", timed=True, corrects=0, wrongs=0, seconds=0.0, **kwargs):
+def played(level_id="small", timed=True, corrects=0, wrongs=0, seconds=0.0, **kwargs):
     current = new_round(LEVELS_BY_ID[level_id], random.Random(0), timed=timed, **kwargs)
     if seconds:
         current, _ = tick(current, seconds)
@@ -34,7 +34,7 @@ def played(level_id="fives", timed=True, corrects=0, wrongs=0, seconds=0.0, **kw
 def test_round_trip(tmp_path):
     path = tmp_path / "progress.json"
     progress = Progress(
-        levels={"rocket/fives": LevelRecord(launches=3, practice=1, failures=2, best_seconds=41.5)},
+        levels={"rocket/small": LevelRecord(launches=3, practice=1, failures=2, best_seconds=41.5)},
         facts={"3+2=5@b": Tally(4, 1, 5, 18.25)},
         placements={"30": Aim(attempts=4, error=21.5)},
         settings=Settings(sound=False, timer=True),
@@ -66,6 +66,11 @@ def test_a_file_from_before_the_clock_still_loads(tmp_path):
         json.dumps(
             {
                 "version": 1,
+                # A level id this code no longer has: a v1 file predates the
+                # addition levels being merged, and its dead rows must load
+                # rather than raise. The per-fact key below is the half that
+                # still means something, which is the point of keying facts by
+                # the equation.
                 "levels": {"fives": {"launches": 3}},
                 "facts": {"3+2=5@b": {"right": 4, "wrong": 1}},
             }
@@ -101,29 +106,29 @@ def test_merge_accumulates_fact_tallies():
 def test_a_launch_records_launch_and_best_time():
     finished = played(corrects=PARTS_TO_LAUNCH, seconds=2.5)
     after = merge(Progress(), finished)
-    record = after.level("rocket", "fives")
+    record = after.level("rocket", "small")
     assert record.launches == 1 and record.failures == 0
     assert record.best_seconds == finished.elapsed
 
 
 def test_best_time_only_improves():
-    before = Progress(levels={"rocket/fives": LevelRecord(launches=1, best_seconds=20.0)})
+    before = Progress(levels={"rocket/small": LevelRecord(launches=1, best_seconds=20.0)})
     after = merge(before, played(corrects=PARTS_TO_LAUNCH, seconds=25.0))
-    assert after.level("rocket", "fives").best_seconds == 20.0
+    assert after.level("rocket", "small").best_seconds == 20.0
 
 
 def test_abduction_records_a_failure_and_no_best_time():
     current = played(corrects=2)
     current, _ = tick(current, 999)
     after = merge(Progress(), current)
-    assert after.level("rocket", "fives") == LevelRecord(failures=1)
+    assert after.level("rocket", "small") == LevelRecord(failures=1)
 
 
 def test_untimed_launches_are_counted_apart():
     """The Timer toggle must not make the number that means "I beat it"
     farmable: with no clock the rocket has no way to lose either."""
     after = merge(Progress(), played(timed=False, corrects=PARTS_TO_LAUNCH))
-    assert after.level("rocket", "fives") == LevelRecord(launches=0, practice=1, best_seconds=None)
+    assert after.level("rocket", "small") == LevelRecord(launches=0, practice=1, best_seconds=None)
 
 
 def test_a_code_win_is_a_launch_though_it_has_no_clock():
@@ -131,19 +136,19 @@ def test_a_code_win_is_a_launch_though_it_has_no_clock():
     code cabinet has three alarms a wrong answer trips, so its win is not
     farmable the way an untimed rocket launch would be."""
     current = new_round(
-        LEVELS_BY_ID["tens"], random.Random(0), timed=False, rules=CODE, mode_id="code"
+        LEVELS_BY_ID["small"], random.Random(0), timed=False, rules=CODE, mode_id="code"
     )
     while not current.over:
         current, _ = apply(current, current.current.answer)
     assert current.parts == LINES_TO_CRACK
     after = merge(Progress(), current)
-    assert after.level("code", "tens").launches == 1
-    assert after.level("code", "tens").practice == 0
+    assert after.level("code", "small").launches == 1
+    assert after.level("code", "small").practice == 0
 
 
 def test_walking_away_records_facts_but_no_launch():
     after = merge(Progress(), played(corrects=3))
-    assert after.level("rocket", "fives") == LevelRecord()
+    assert after.level("rocket", "small") == LevelRecord()
     assert sum(t.answered for t in after.facts.values()) == 3
 
 
@@ -167,17 +172,17 @@ def test_a_v1_record_migrates_under_the_rocket(tmp_path):
 
 def test_a_rocket_win_and_a_tennis_win_are_separate_records():
     after = merge(Progress(), played(corrects=PARTS_TO_LAUNCH))
-    tennis = new_round(LEVELS_BY_ID["fives"], random.Random(0), rules=TENNIS, mode_id="tennis")
+    tennis = new_round(LEVELS_BY_ID["small"], random.Random(0), rules=TENNIS, mode_id="tennis")
     for _ in range(TENNIS.target):
         tennis, _ = apply(tennis, tennis.current.answer)
     after = merge(after, tennis)
-    assert after.level("rocket", "fives").launches == 1
-    assert after.level("tennis", "fives").launches == 1
+    assert after.level("rocket", "small").launches == 1
+    assert after.level("tennis", "small").launches == 1
 
 
 def test_placements_accumulate_by_bucket():
     drive = new_round(
-        LEVELS_BY_ID["fives"], random.Random(0), rules=FOOTBALL, mode_id="football"
+        LEVELS_BY_ID["small"], random.Random(0), rules=FOOTBALL, mode_id="football"
     )
     target = drive.placing
     drive, _ = place(drive, target + 2)
@@ -226,7 +231,7 @@ def test_target_rows_accumulate_across_ends():
 
 def test_a_football_round_still_writes_its_aims_by_bucket():
     drive = new_round(
-        LEVELS_BY_ID["fives"], random.Random(0), rules=FOOTBALL, mode_id="football"
+        LEVELS_BY_ID["small"], random.Random(0), rules=FOOTBALL, mode_id="football"
     )
     drive, _ = place(drive, drive.placing)
     after = merge(Progress(), drive)
@@ -254,3 +259,4 @@ def test_a_won_end_is_a_launch_though_it_has_no_clock():
     after = merge(Progress(), round)
     assert after.level("curling", "thirds").launches == 1
     assert after.level("curling", "thirds").practice == 0
+

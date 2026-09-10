@@ -18,7 +18,7 @@ from mathr.domain.round import (
     tick,
 )
 
-LEVEL = LEVELS_BY_ID["tens"]
+LEVEL = LEVELS_BY_ID["small"]
 
 
 def code(seed=0):

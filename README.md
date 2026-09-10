@@ -243,16 +243,15 @@ different name for it.
 
 | Level | What it drills | Pace |
 |---|---|---|
-| **Make Five** | bonds of five — `2 + 3`, `5 − 2`, `1 + ? = 5` | 3s a part |
-| **Make Ten** | bonds of ten — `7 + 3`, `10 − 6`, `? + 4 = 10` | 3s a part |
-| **Over the Ten** | crossing ten within 20 — `8 + 6`, `15 − 7` | 5s a part |
+| **Ten and Below** | both numbers ten or less — `2 + 2`, `7 + 7`, `10 − 6`, `1 + ? = 5` | 4s a part |
+| **Above Ten** | one number past ten, up to 20 — `12 + 3`, `13 − 4`, `20 − 7` | 5s a part |
 | **Times Two** | `2 × 0` through `2 × 10`, both ways round | 5s a part |
 | **Times Five** | `5 × 0` through `5 × 10` | 5s a part |
 | **Times Ten** | `10 × 0` through `10 × 10` | 5s a part |
 | **Divide by Two** | `2 ÷ 2` through `20 ÷ 2`, both ways round | 5s a part |
 | **Divide by Five** | `5 ÷ 5` through `50 ÷ 5` | 5s a part |
 | **Divide by Ten** | `10 ÷ 10` through `100 ÷ 10` | 5s a part |
-| **Everything** | every fact above, 338 of them, shuffled together | 5s a part |
+| **Everything** | every fact above, 938 of them, shuffled together | 5s a part |
 
 The multiplication levels ask only `a × b = ?` and `a × ? = c`; the two forms
 that would complete the set are division, and they are their own column rather
@@ -266,6 +265,17 @@ Division is also the one operation whose answer is *not* where its number line
 ends. `12 ÷ 2` draws six hops of two and lands on 12 — the number already in the
 question — so the hint captions the hop count, and the picture is exactly the
 one `2 × 6 = 12` draws.
+
+The two addition levels split on **the two numbers as written**, never on the
+answer. `7 + 7 = 14` is two small numbers, so it is in *Ten and Below*; `14 − 7`
+is a big number meeting a small one, so it is in *Above Ten*. One number bond
+therefore sends its addition forms to one level and its subtraction forms to the
+other the moment its total passes ten. *Above Ten* has exactly one number past
+ten — `18 − 13` is regrouping, which is a different skill and is not here.
+
+Nothing adds nought to nought: `0 + 0 = ?` measures nothing and would only
+inflate the record, the same reason nothing divides by nought. Zero *addends*
+stay, because `0 + 5` is a real thing to get wrong.
 
 *Tricky Facts* keeps its dimmed button in the Everything column: reserved, not
 built.
@@ -385,7 +395,7 @@ bug guaranteed to end use of the program.
  "version": 2,
  "settings": { "sound": true, "timer": true },
  "levels": {
-  "rocket/bridge": { "launches": 3, "practice": 1, "failures": 9, "best_seconds": 47.2 }
+  "rocket/big": { "launches": 3, "practice": 1, "failures": 9, "best_seconds": 47.2 }
  },
  "facts": {
   "15-7=8@result": { "right": 4, "wrong": 3, "answered": 7, "seconds": 31.2 }
@@ -424,7 +434,7 @@ and nothing else in the file would have told you.
 
 ```sh
 uv run mathr      # play
-uv run pytest     # 93 tests: facts, round rules, both clocks, storage, scaling
+uv run pytest     # 240 tests: facts, round rules, both clocks, storage, scaling
 ```
 
 One runtime dependency, `pygame-ce` (never upstream `pygame` — it has no cp314

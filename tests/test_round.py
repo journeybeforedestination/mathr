@@ -17,7 +17,7 @@ from mathr.domain.round import (
 
 @pytest.fixture
 def round_():
-    return new_round(LEVELS_BY_ID["fives"], random.Random(0))
+    return new_round(LEVELS_BY_ID["small"], random.Random(0))
 
 
 def answer(round_, correct=True):
@@ -91,13 +91,13 @@ def test_queue_never_empties(round_):
 
 
 def test_shuffle_is_deterministic_per_seed():
-    a = new_round(LEVELS_BY_ID["tens"], random.Random(7))
-    b = new_round(LEVELS_BY_ID["tens"], random.Random(7))
+    a = new_round(LEVELS_BY_ID["small"], random.Random(7))
+    b = new_round(LEVELS_BY_ID["small"], random.Random(7))
     assert a.deck == b.deck
 
 
 def test_ten_returns_win_the_match():
-    current = new_round(LEVELS_BY_ID["tens"], random.Random(0), rules=TENNIS)
+    current = new_round(LEVELS_BY_ID["small"], random.Random(0), rules=TENNIS)
     for _ in range(TENNIS.target - 1):
         current, outcome = answer(current)
         assert outcome is Outcome.CORRECT
@@ -106,7 +106,7 @@ def test_ten_returns_win_the_match():
 
 
 def test_a_wrong_answer_costs_no_return_and_no_retry_slot():
-    current = new_round(LEVELS_BY_ID["tens"], random.Random(0), rules=TENNIS)
+    current = new_round(LEVELS_BY_ID["small"], random.Random(0), rules=TENNIS)
     current, _ = answer(current)
     after, _ = answer(current, correct=False)
     assert after.parts == 1
