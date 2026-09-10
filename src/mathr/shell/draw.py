@@ -29,6 +29,21 @@ COURT = (38, 72, 92)
 COURT_LINE = (198, 216, 228)
 BALL = (222, 240, 96)
 CABINET = (44, 40, 86)
+PANEL_DARK = (20, 24, 46)
+PANEL_LIT = (32, 38, 72)
+VAULT = (16, 38, 46)  # the panel behind the intercepted lines
+VAULT_LINE = (96, 206, 190)
+STEEL = (150, 162, 186)
+DOOR_FACE = (58, 66, 94)  # the safe's plate: gunmetal, not the panel blue
+DOOR_EDGE = (112, 124, 158)
+DOOR_DARK = (30, 34, 54)
+BRASS = (206, 158, 74)
+CHAMBER = (8, 10, 20)  # inside the safe, where no light has been
+WALL = (20, 22, 40)
+GOLD_DARK = (188, 132, 36)
+GEM_RED = (226, 84, 104)
+GEM_BLUE = (96, 160, 236)
+GEM_GREEN = (96, 214, 150)
 
 ROCKET_BOX = (360, 580)
 ROCKET_ORIGIN = (110, 130)
@@ -545,6 +560,305 @@ def draw_cabinet(
     return screen
 
 
+# --- the safe ---------------------------------------------------------------
+# The whole left column is one door he is working on all round: the intercepted
+# lines behind its glass, the combination on its face, and the dial and bolts
+# below them. It is drawn as a door rather than a readout because this is the
+# one mode with no clock and no object being built — see `plan.md`, *the maths
+# has to be the reward*. The rect names are `CODE_*`: `PANEL` is a colour, and a
+# rect of the same name silently replaced it once already.
+CODE_DOOR = pygame.Rect(16, 148, 676, 644)
+CODE_PANEL = pygame.Rect(76, 210, 548, 434)
+LOCK_ROW = pygame.Rect(76, 660, 548, 116)
+#: A hint covers the glass, and needs about 470px for two routes. Not
+#: `CODE_PANEL` itself: the panel is sized for six lines, and tying the hint to
+#: it means retuning the lines squeezes the number line. It clears the alarm
+#: lamps above and the combination below, both of which stay readable under it.
+CODE_HINT = pygame.Rect(52, 198, 604, 470)
+#: Behind the door, revealed as it swings. Inset only by the frame: the rail,
+#: the combination and the dial are all *on* the door and go with it.
+CODE_CHAMBER = CODE_DOOR.inflate(-40, -40)
+_LINE_HEIGHT = 62
+_HINGE = 30  # how far the hinge barrels sit in from the door's left edge
+
+
+def line_rows(count: int) -> tuple[pygame.Rect, ...]:
+    """Where each line of the current lock sits.
+
+    Centred as a block rather than filled from the top, so a four-line lock and
+    a six-line lock both look deliberate instead of leaving a hole underneath.
+    """
+    top = CODE_PANEL.centery - count * _LINE_HEIGHT // 2
+    return tuple(
+        pygame.Rect(CODE_PANEL.x + 20, top + index * _LINE_HEIGHT, CODE_PANEL.width - 40, _LINE_HEIGHT - 8)
+        for index in range(count)
+    )
+
+
+def draw_bolts(surface, opening: float) -> None:
+    """Three bolts in the rim opposite the hinges, drawn back as a lock opens.
+
+    They sit in the rim rather than beside the combination so that the side the
+    door is held shut on is the side that visibly lets go — and they are drawn
+    after the glass, or the retracted position is behind it.
+    """
+    for index in range(3):
+        bolt = pygame.Rect(0, 0, 34, 26)
+        bolt.center = (CODE_DOOR.right - 24 - int(16 * opening), 300 + index * 150)
+        pygame.draw.rect(surface, GOOD if opening > 0 else STEEL, bolt, border_radius=6)
+        pygame.draw.rect(surface, DOOR_DARK, bolt, width=2, border_radius=6)
+
+
+def _hinges(surface) -> None:
+    for y in (300, 600):
+        barrel = pygame.Rect(0, 0, 30, 96)
+        barrel.center = (CODE_DOOR.left + _HINGE, y)
+        pygame.draw.rect(surface, DOOR_EDGE, barrel, border_radius=14)
+        pygame.draw.rect(surface, DOOR_DARK, barrel, width=3, border_radius=14)
+        pygame.draw.circle(surface, DOOR_DARK, barrel.center, 6)
+
+
+def draw_door(surface, small, lock: int, locks: int, tripped: int, alarms: int) -> None:
+    """The safe's face: the frame, its hinges, its bolts, and the alarm lamps.
+
+    The lamps are on the door rather than in a corner of the screen because a
+    wrong answer should light up the thing he is trying to open, and because the
+    labelled row they replace was the last of the old readout the safe stands in
+    for.
+    """
+    pygame.draw.rect(surface, DOOR_FACE, CODE_DOOR, border_radius=22)
+    pygame.draw.rect(surface, DOOR_EDGE, CODE_DOOR, width=4, border_radius=22)
+    pygame.draw.rect(surface, DOOR_DARK, CODE_DOOR.inflate(-24, -24), width=3, border_radius=16)
+    for x in range(CODE_DOOR.left + 60, CODE_DOOR.right - 40, 84):
+        pygame.draw.circle(surface, DOOR_EDGE, (x, CODE_DOOR.top + 12), 4)
+        pygame.draw.circle(surface, DOOR_EDGE, (x, CODE_DOOR.bottom - 12), 4)
+    _hinges(surface)
+
+    rail = CODE_DOOR.top + 32
+    text(surface, small, f"LOCK {lock + 1} OF {locks}", (CODE_DOOR.left + 180, rail), DIM)
+    text(surface, small, "ALARMS", (424, rail), DIM)
+    for index in range(alarms):
+        centre = (528 + index * 46, rail)
+        pygame.draw.circle(surface, BAD if index < tripped else DOOR_DARK, centre, 15)
+        pygame.draw.circle(surface, DOOR_EDGE, centre, 15, width=3)
+        if index < tripped:
+            pygame.draw.circle(surface, INK, centre, 6)
+
+
+def draw_panel(surface, font, lines, active: int) -> None:
+    """The glass, and what is behind it: what is open, what he is on, what is dark.
+
+    `lines` is every line of this lock in order, each one either a solved
+    sentence or an unsolved one; `active` is which of them is his now. An
+    unsolved line below the active one is drawn as a bare row with no numbers on
+    it — the transmissions have not been decoded yet, and showing them early
+    turns a lock into a worksheet he can read ahead on.
+    """
+    pygame.draw.rect(surface, VAULT, CODE_PANEL, border_radius=16)
+    pygame.draw.rect(surface, VAULT_LINE, CODE_PANEL, width=3, border_radius=16)
+
+    for row, (rect, line) in enumerate(zip(line_rows(len(lines)), lines)):
+        done = row < active
+        if row > active:
+            # Still encrypted: a row of blocks, so he can see how much is left
+            # without being able to work ahead.
+            for block in range(7):
+                pygame.draw.rect(
+                    surface,
+                    PANEL_DARK,
+                    pygame.Rect(rect.x + 30 + block * 34, rect.centery - 7, 24, 14),
+                    border_radius=4,
+                )
+            continue
+        pygame.draw.rect(surface, SPACE if done else PANEL_LIT, rect, border_radius=10)
+        if not done:
+            pygame.draw.rect(surface, ACCENT, rect, width=3, border_radius=10)
+        text(
+            surface,
+            font,
+            line.filled if done else line.prompt,
+            (rect.centerx - 30, rect.centery),
+            GOOD if done else INK,
+        )
+        if done:
+            pygame.draw.circle(surface, GOOD, (rect.right - 30, rect.centery), 11)
+
+
+def draw_dial(surface, centre: tuple[int, int], radius: int, turn: float) -> None:
+    """The dial, at rest between answers and turning on each one.
+
+    `turn` is in radians and comes from how much of the combination is in, so
+    the motion says what he just did rather than running on the wall clock the
+    way the cabinet's dial does.
+    """
+    pygame.draw.circle(surface, DOOR_EDGE, centre, radius)
+    pygame.draw.circle(surface, DOOR_DARK, centre, radius - 6)
+    pygame.draw.circle(surface, BRASS, centre, radius, width=4)
+    for notch in range(12):
+        angle = turn + notch * math.pi / 6
+        inner = radius - 14
+        pygame.draw.line(
+            surface,
+            BRASS,
+            (centre[0] + math.cos(angle) * inner, centre[1] + math.sin(angle) * inner),
+            (centre[0] + math.cos(angle) * (radius - 6), centre[1] + math.sin(angle) * (radius - 6)),
+            3,
+        )
+    pygame.draw.line(
+        surface,
+        INK,
+        centre,
+        (centre[0] + math.cos(turn) * (radius - 12), centre[1] + math.sin(turn) * (radius - 12)),
+        5,
+    )
+    pygame.draw.circle(surface, BRASS, centre, 7)
+    # The index mark the combination is read against: fixed, so the dial turning
+    # under it is what reads as motion.
+    pygame.draw.polygon(
+        surface,
+        INK,
+        [
+            (centre[0] - 7, centre[1] - radius - 4),
+            (centre[0] + 7, centre[1] - radius - 4),
+            (centre[0], centre[1] - radius + 8),
+        ],
+    )
+
+
+def draw_lock(surface, font, small, digits, size: int, opening: float = 0.0) -> None:
+    """The combination as it fills, one cell per line of the lock, and the dial.
+
+    A cracked lock is held with its digits still showing — see `App.opening`.
+    The numbers he worked out are the reward, and the frame that cleared them to
+    animate a bar over the empty row was showing him the code being erased.
+    """
+    # Beside the cells rather than over them: a heading above the row would sit
+    # under the hint box, which covers the glass down to the top of this row.
+    text(surface, small, "CODE", (LOCK_ROW.left + 36, LOCK_ROW.top + 72), DIM)
+    width, gap = 56, 10
+    span = size * width + (size - 1) * gap
+    left = LOCK_ROW.centerx - span // 2
+    for index in range(size):
+        cell = pygame.Rect(left + index * (width + gap), LOCK_ROW.top + 40, width, 64)
+        filled = index < len(digits)
+        pygame.draw.rect(surface, PANEL_LIT if filled else PANEL_DARK, cell, border_radius=8)
+        pygame.draw.rect(
+            surface,
+            GOOD if opening > 0 else ACCENT if filled else STEEL,
+            cell,
+            width=3,
+            border_radius=8,
+        )
+        if filled:
+            text(surface, font, str(digits[index]), cell.center, GOOD if opening > 0 else ACCENT)
+    # A notch per number in, and a fast spin as the bolts go back.
+    draw_dial(surface, (588, LOCK_ROW.top + 72), 40, len(digits) * 0.9 + opening * 7.0)
+
+
+#: Gold, coins and gems, at fixed spots: a hoard that reshuffled every frame
+#: would shimmer rather than sit there.
+_SHELF = 470  # a second ledge, so the chamber is stocked rather than floored
+_BARS = (
+    (188, 664), (268, 664), (348, 664), (228, 620), (308, 620), (268, 576), (438, 664),
+    (232, _SHELF), (312, _SHELF), (272, _SHELF - 40),
+)
+_COINS = (
+    (132, 700), (176, 708), (222, 702), (426, 704), (470, 694), (512, 706), (556, 692),
+    (596, 704), (152, 662), (424, _SHELF - 20), (468, _SHELF - 14), (150, _SHELF - 20),
+)
+_GEMS = (
+    (404, 624, GEM_RED), (486, 638, GEM_BLUE), (534, 620, GEM_GREEN), (146, 630, GEM_BLUE),
+    (588, 646, GEM_RED), (526, _SHELF - 20, GEM_BLUE), (566, _SHELF - 18, GEM_GREEN),
+)
+
+
+def draw_treasure(surface, swing: float) -> None:
+    """What is inside, and the door leaf swinging off it.
+
+    `swing` runs 0 to 1. The leaf is the door's own face with its width taken
+    away toward the hinges, which is what a door opening away from you does on
+    screen; it is drawn over the hoard so that it covers it until it is out of
+    the way.
+    """
+    # The face is repainted first: everything `render_code` drew on it — the
+    # rail, the glass, the combination, the dial — is on the door, and a door
+    # that has swung away cannot still be showing them.
+    pygame.draw.rect(surface, DOOR_FACE, CODE_DOOR, border_radius=22)
+    pygame.draw.rect(surface, DOOR_EDGE, CODE_DOOR, width=4, border_radius=22)
+    pygame.draw.rect(surface, CHAMBER, CODE_CHAMBER, border_radius=12)
+    pygame.draw.rect(surface, DOOR_DARK, CODE_CHAMBER, width=4, border_radius=12)
+    # A back wall short of the opening, so the chamber has a depth to it.
+    pygame.draw.rect(surface, WALL, CODE_CHAMBER.inflate(-56, -56), border_radius=8)
+    for ledge in (_SHELF, 716):
+        pygame.draw.rect(
+            surface, DOOR_DARK, pygame.Rect(CODE_CHAMBER.left + 20, ledge, CODE_CHAMBER.width - 40, 14)
+        )
+    for bar_x, bar_y in _BARS:
+        pygame.draw.polygon(
+            surface,
+            ACCENT,
+            [(bar_x, bar_y), (bar_x + 76, bar_y), (bar_x + 66, bar_y - 40), (bar_x + 10, bar_y - 40)],
+        )
+        pygame.draw.polygon(
+            surface,
+            GOLD_DARK,
+            [(bar_x, bar_y), (bar_x + 76, bar_y), (bar_x + 66, bar_y - 40), (bar_x + 10, bar_y - 40)],
+            width=3,
+        )
+    for coin_x, coin_y in _COINS:
+        pygame.draw.circle(surface, ACCENT, (coin_x, coin_y), 20)
+        pygame.draw.circle(surface, GOLD_DARK, (coin_x, coin_y), 20, width=3)
+        pygame.draw.circle(surface, GOLD_DARK, (coin_x, coin_y), 8, width=2)
+    for gem_x, gem_y, colour in _GEMS:
+        pygame.draw.polygon(
+            surface,
+            colour,
+            [(gem_x, gem_y - 20), (gem_x + 18, gem_y), (gem_x, gem_y + 20), (gem_x - 18, gem_y)],
+        )
+        pygame.draw.polygon(surface, INK, [(gem_x, gem_y - 20), (gem_x + 18, gem_y), (gem_x - 18, gem_y)], width=2)
+
+    if swing < 1.0:
+        leaf = pygame.Rect(
+            CODE_DOOR.left, CODE_DOOR.top, max(8, int(CODE_DOOR.width * (1 - swing))), CODE_DOOR.height
+        )
+        pygame.draw.rect(surface, DOOR_FACE, leaf, border_radius=22)
+        pygame.draw.rect(surface, DOOR_EDGE, leaf, width=4, border_radius=22)
+        # The edge of the leaf, which is the only part of it with any thickness.
+        pygame.draw.rect(surface, DOOR_EDGE, pygame.Rect(leaf.right - 12, leaf.top + 10, 12, leaf.height - 20))
+    # Last, and on both paths: the hinges are what the leaf is still attached to,
+    # so a leaf drawn over them reads as a slab sliding sideways.
+    _hinges(surface)
+
+
+def draw_vault(surface, rect: pygame.Rect, open_by: float = 0.0) -> None:
+    """A round vault door, for the cabinet screen.
+
+    Not the door he plays against: that one wraps a 584-wide panel and is
+    rectangular. This one has to read at 200px on a cabinet, where a turning
+    dial does and a rectangular box does not.
+    """
+    radius = min(rect.width, rect.height) // 2 - 6
+    centre = rect.center
+    pygame.draw.circle(surface, STEEL, centre, radius)
+    pygame.draw.circle(surface, VAULT, centre, radius, width=max(2, radius // 8))
+    pygame.draw.circle(surface, VAULT_LINE, centre, max(4, radius // 3), width=3)
+    for spoke in range(4):
+        angle = spoke * math.pi / 2 + open_by * math.pi
+        pygame.draw.line(
+            surface,
+            VAULT,
+            centre,
+            (centre[0] + math.cos(angle) * radius * 0.8, centre[1] + math.sin(angle) * radius * 0.8),
+            5,
+        )
+
+
+def draw_mini_vault(surface, rect: pygame.Rect, now: float) -> None:
+    """The cabinet's screen: a dial turning, forever."""
+    inset = rect.inflate(-int(rect.width * 0.3), -int(rect.height * 0.12))
+    draw_vault(surface, inset, (1 - math.cos(now * 1.1)) / 2)
+
+
 def rocket_thumbnail(parts, height: int) -> pygame.Surface:
     """The rocket, once, small enough for a cabinet screen."""
     box = pygame.Surface(ROCKET_BOX, pygame.SRCALPHA)
@@ -917,6 +1231,18 @@ class Layout:
 
 
 CLASSIC = Layout((940, 210), pygame.Rect(840, 280, 200, 96), HINT_BOX, (910, 320))
+#: The panel owns the prompt — the line he is on is drawn in place, in the list
+#: — so `prompt` here is only where a hint's title would go. Everything he types
+#: is to the right, the way the rocket and the court are laid out.
+#: `prompt` is never drawn in this mode — the panel draws the line he is on, in
+#: place — so it is only where a hint's title would go. The banner sits high in
+#: the door so that the hoard behind it has the rest of the opening to itself.
+CODEBREAK = Layout(
+    (CODE_PANEL.centerx, CODE_PANEL.top - 40),
+    pygame.Rect(840, 280, 200, 96),
+    CODE_HINT,  # over the door, which is dead while a hint is up
+    (CODE_PANEL.centerx, 262),
+)
 DOWNFIELD = Layout(
     (516, 432),
     pygame.Rect(416, 466, 200, 96),
@@ -934,13 +1260,80 @@ def _hint_positions(strategy) -> tuple[int, ...]:
     return tuple(places)
 
 
-def draw_number_line(surface, font, label_font, strategy, prompt: str, rect=HINT_BOX) -> None:
+def _route(surface, label_font, strategy, baseline: int, at, colour) -> int:
+    """One side's hops and dots on a given baseline. Returns where it landed."""
+    places = _hint_positions(strategy)
+    for index, jump in enumerate(strategy.jumps):
+        start_x, end_x = at(places[index]), at(places[index + 1])
+        peak = baseline - 34
+        pygame.draw.lines(
+            surface,
+            colour,
+            False,
+            [(start_x, baseline), ((start_x + end_x) // 2, peak), (end_x, baseline)],
+            4,
+        )
+        sign = "+" if jump >= 0 else "−"
+        text(surface, label_font, f"{sign}{abs(jump)}", ((start_x + end_x) // 2, peak - 16), colour)
+    for index, place in enumerate(places):
+        last = index == len(places) - 1
+        pygame.draw.circle(surface, colour if last else HULL, (at(place), baseline), 9 if last else 6)
+    text(surface, label_font, str(places[-1]), (at(places[-1]), baseline + 24), colour)
+    return places[-1]
+
+
+def draw_two_routes(surface, font, label_font, strategies, prompt: str, rect=HINT_BOX) -> None:
+    """Both sides of a sentence, over one shared span.
+
+    The span is shared on purpose: two lines each scaled to their own numbers
+    would draw `7 + 6` and `9 + 5` landing in the same place, which is the exact
+    opposite of what the picture is for. Over one span the gap between 13 and 14
+    is a distance he can see, and that gap is the whole lesson.
+    """
+    pygame.draw.rect(surface, PANEL, rect, border_radius=18)
+    pygame.draw.rect(surface, ACCENT, rect, width=3, border_radius=18)
+    text(surface, font, prompt, (rect.centerx, rect.top + 44), INK)
+
+    places = [place for strategy in strategies for place in _hint_positions(strategy)]
+    low, high = min(places), max(places)
+    left, right = rect.left + HINT_MARGIN, rect.right - HINT_MARGIN
+
+    def at(value: int) -> int:
+        if high == low:
+            return rect.centerx
+        return int(left + (right - left) * (value - low) / (high - low))
+
+    # Proportional to the box: the two routes plus their labels need most of it,
+    # and fixed offsets put the first arc through the prompt in anything short.
+    ends = []
+    for index, strategy in enumerate(strategies):
+        baseline = int(rect.top + rect.height * (0.42 + 0.30 * index))
+        pygame.draw.line(surface, DIM, (rect.left + 30, baseline), (rect.right - 30, baseline), 3)
+        ends.append(_route(surface, label_font, strategy, baseline, at, ACCENT))
+
+    same = ends[0] == ends[1]
+    verdict = (
+        f"both land on {ends[0]}"
+        if same
+        else f"{ends[0]} and {ends[1]} — not the same"
+    )
+    text(surface, label_font, verdict, (rect.centerx, rect.bottom - 44), GOOD if same else BAD)
+
+
+def draw_number_line(
+    surface, font, label_font, strategy, prompt: str, rect=HINT_BOX, caption: str | None = None
+) -> None:
     """The route to the answer: a hop per step, labelled and signed.
 
     The renderer owns the span, because the domain hands over numbers only. It
     also owns the degenerate shapes those numbers really produce: a jump of zero
     (`0 + 5`, `5 - 0`), which draws as a labelled dot rather than being special
     cased away, and an empty jump list (`2 x 0`), which is a single dot.
+
+    `caption` exists for division, the one operation whose answer is the *number
+    of hops* rather than where they land: the line for `12 ÷ 2` ends on 12, and
+    12 is the number he was already given. Without it the picture shows him
+    everything except the thing he was asked for.
     """
     pygame.draw.rect(surface, PANEL, rect, border_radius=18)
     pygame.draw.rect(surface, ACCENT, rect, width=3, border_radius=18)
@@ -984,3 +1377,6 @@ def draw_number_line(surface, font, label_font, strategy, prompt: str, rect=HINT
         last = index == len(places) - 1
         pygame.draw.circle(surface, ACCENT if last else HULL, (x, baseline), 9 if last else 7)
         text(surface, label_font, str(place), (x, baseline + 30), ACCENT if last else DIM)
+
+    if caption is not None:
+        text(surface, label_font, caption, (rect.centerx, rect.bottom - 30), GOOD)

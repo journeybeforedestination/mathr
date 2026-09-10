@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
 
-from .facts import Level, Question, shuffled
+from .facts import Item, Level, Sentence, sentences, shuffled
 
 PARTS_TO_LAUNCH = 10
 RETRY_GAP = 3  # far enough that he must retrieve the fact, not echo it
@@ -20,6 +20,13 @@ GRACE_PARTS = 5  # the rocket round opens with this many problems' worth of time
 BANK_PARTS = 4  # and can never bank more than this many afterwards
 
 BALL_FLIGHT = 1.5  # how many problems' worth of time a served ball takes to land
+
+#: A code-breaking round is three locks, each longer than the last. The last
+#: lock should not feel like the first, which is the one thing a flat run of ten
+#: identical questions cannot do.
+LOCKS = (4, 5, 6)
+LINES_TO_CRACK = sum(LOCKS)
+ALARMS = 3  # wrong answers before the vault locks down
 
 #: A placement: a number is named and he points at where it goes on a bare line.
 #: The domain knows a span and a tolerance, never a football.
@@ -78,6 +85,9 @@ class Outcome(Enum):
     SECURED = "secured"  # the answer landed in time and the marker moved
     LAPSED = "lapsed"  # it did not, and the placement came to nothing
     SETBACK = "setback"  # the marker was driven back, and he placed where to
+    # Named for what the domain knows — a run of lines finished — because
+    # UNLOCKED would put a vault in here.
+    CRACKED = "cracked"  # that line completed a lock
     WON = "won"
     LOST = "lost"
 
@@ -103,6 +113,17 @@ class Rules:
     places: bool = False  # does this mode ask for a placement whenever one is free
     confirm_parts: float | None = None  # None: a placement is never on the clock
     place_lives: int | None = None  # wide placements survivable; None is endless
+    #: How many lines each lock takes, in order. Non-empty means this mode's
+    #: deck is sentences rather than facts, and that its target is grouped into
+    #: locks that open one at a time. One dial rather than two: a mode that has
+    #: locks has sentences in them, and there is no useful mode that has either
+    #: without the other.
+    locks: tuple[int, ...] = ()
+    #: Does a wrong answer cost one of `lives`. Without it `lives` means only
+    #: "empty-clock events survived" — `points` is incremented in `tick` and
+    #: nowhere else — so a mode with lives and no clock has three of them that
+    #: nothing can ever spend, and a round that can be neither won nor lost.
+    wrong_costs_life: bool = False
 
 
 #: A correct answer buys one problem's worth, up to a four-problem ceiling.
@@ -117,6 +138,26 @@ TENNIS = Rules(BALL_FLIGHT, BALL_FLIGHT, BALL_FLIGHT, False, False, 3, 10)
 #: is what there are already two other modes for.
 FOOTBALL = Rules(
     GRACE_PARTS, BANK_PARTS, 1.0, True, True, None, PLACE_MAX, True, CATCH_PARTS, PLACE_LIVES
+)
+
+#: No clock at all, and the lives are alarms a wrong answer trips. The skill
+#: this mode measures is reasoning *faster than his own arithmetic*, and a
+#: threat clock suppresses the very thing being measured — so the three timing
+#: dials are dead here, and `tick` still accumulates the response times that
+#: make the measurement, because it does that in an untimed round by design.
+#:
+#: A wrong answer does not advance: the line is still locked and he still has to
+#: open it. What it costs is an alarm.
+CODE = Rules(
+    0.0,
+    0.0,
+    0.0,
+    False,
+    False,
+    ALARMS,
+    LINES_TO_CRACK,
+    locks=LOCKS,
+    wrong_costs_life=True,
 )
 
 
@@ -159,8 +200,8 @@ class Round:
     mode_id: str  # which game this was, so the record can say so
     rules: Rules
     seconds_per_part: float
-    deck: tuple[Question, ...]  # the shuffled pool, replayed when the queue runs low
-    queue: tuple[Question, ...]  # upcoming; queue[0] is on screen
+    deck: tuple[Item, ...]  # the shuffled pool, replayed when the queue runs low
+    queue: tuple[Item, ...]  # upcoming; queue[0] is on screen
     parts: int
     points: int  # empty-clock events survived
     asked: int
@@ -171,7 +212,7 @@ class Round:
     seconds_left: float | None  # None is an untimed round
     on_current: float  # spent on the question showing now
     elapsed: float  # wall time in the round, for the best-time record
-    hint: Question | None  # the miss being explained; every clock stops while set
+    hint: Item | None  # the miss being explained; every clock stops while set
     """One field for both "the clock is stopped" and "this is the question being
     drawn", so the two can never disagree.
 
@@ -190,9 +231,10 @@ class Round:
     pending: int | None = None  # a good placement, waiting on its answer
     pending_left: float | None = None  # seconds it has left; None never lapses
     adrift: int = 0  # placements thrown wide; `place_lives` of them end the round
+    cracked: tuple[Sentence, ...] = ()  # lines already open in the lock he is on
 
     @property
-    def current(self) -> Question:
+    def current(self) -> Item:
         return self.queue[0]
 
     @property
@@ -264,6 +306,25 @@ class Round:
         return min(PLACE_MAX - 1, here + self.gains[self.placed % len(self.gains)])
 
     @property
+    def lock(self) -> tuple[int, int, int]:
+        """Which lock he is on, how many of its lines are open, how long it is.
+
+        Derived from `parts` alone, so it cannot disagree with the score. A
+        stored lock index would have to be written on every path that moves
+        `parts`, and one missed path is a vault that opens twice or never.
+        """
+        return _lock_at(self.rules, self.parts)
+
+    @property
+    def losable(self) -> bool:
+        """Whether this round has any way to end badly.
+
+        What makes a win farmable is having no way to lose, not having no clock
+        — which is why `storage._fold` asks this rather than asking `timed`.
+        """
+        return self.timed or self.rules.wrong_costs_life
+
+    @property
     def confirm_seconds(self) -> float:
         """How long a placement gets, for a renderer that draws it closing in."""
         return self.seconds_per_part * (self.rules.confirm_parts or 0.0)
@@ -275,6 +336,28 @@ class Round:
     @property
     def timed(self) -> bool:
         return self.seconds_left is not None
+
+
+def _lock_at(rules: Rules, done: int) -> tuple[int, int, int]:
+    """Where `done` lines in falls: (which lock, how many of it, how long it is)."""
+    if not rules.locks:
+        return 0, done, rules.target
+    for index, size in enumerate(rules.locks):
+        if done < size:
+            return index, done, size
+        done -= size
+    last = len(rules.locks) - 1
+    return last, rules.locks[last], rules.locks[last]
+
+
+def _opens_a_lock(rules: Rules, done: int) -> bool:
+    """Whether the `done`th line was the one that swung a vault open."""
+    total = 0
+    for size in rules.locks:
+        total += size
+        if done == total:
+            return True
+    return False
 
 
 def _weights(level: Level, history: Mapping[str, Tally]) -> Mapping[str, float]:
@@ -307,9 +390,17 @@ def new_round(
     history: Mapping[str, Tally] | None = None,
     mode_id: str = "rocket",
 ) -> Round:
-    if not timed and rules.lives is not None:
-        # A rally has nowhere to put the ball without a deadline to fly along.
-        raise ValueError("a round with lives cannot be untimed")
+    if not timed and rules.lives is not None and not rules.wrong_costs_life:
+        # Lives are spent by the clock emptying unless a mode says otherwise, so
+        # an untimed round with lives and nothing else to spend them has three
+        # of them that nothing can touch, and a round that cannot be lost. For
+        # tennis that is still exactly true — a rally has nowhere to put the
+        # ball without a deadline to fly along.
+        raise ValueError("a round with lives needs something that can spend one")
+    if rules.locks and sum(rules.locks) != rules.target:
+        # Otherwise the last vault never swings, or the round is won partway
+        # through a lock with lines still showing on the panel.
+        raise ValueError("the locks must add up to the target")
     if rules.places and rules.target != PLACE_MAX:
         # The marker is the line. A shorter bar would quietly round every catch
         # down to the nearest part instead of spotting it where it was called.
@@ -318,7 +409,14 @@ def new_round(
     # round draws from the front, so ordering is selection, and no level can
     # ever empty itself into a "mastered" state the level screen would have to
     # show.
-    deck = shuffled(level.facts, rng, _weights(level, history) if history else None)
+    # A judging mode's deck is sentences derived from the same pool, so every
+    # cabinet still leads to the same twelve level cards. They are not weighted:
+    # `_weights` reads a per-fact history, and a sentence is not a fact.
+    deck = (
+        sentences(level.facts, rng)
+        if rules.locks
+        else shuffled(level.facts, rng, _weights(level, history) if history else None)
+    )
     # Drawn here, never in a reducer: `tick`, `apply` and `place` take no rng,
     # and a round that cannot be replayed from its seed breaks the shuffle
     # tests in a way that reads as a shuffle bug. A mode without placements
@@ -362,7 +460,7 @@ def new_round(
     )
 
 
-def _advance(round: Round, retry: Question | None = None) -> tuple[Question, ...]:
+def _advance(round: Round, retry: Item | None = None) -> tuple[Item, ...]:
     rest = round.queue[1:]
     if retry is not None:
         # Slicing past the end appends, so a fact missed near the end of the
@@ -609,6 +707,25 @@ def apply(round: Round, given: int) -> tuple[Round, Outcome]:
         )
         return secured, Outcome.WON if launched else Outcome.SECURED
 
+    if not correct and rules.wrong_costs_life:
+        # An alarm, not a part. The line is still locked and he still has to
+        # open it, so the queue does not move and nothing is taken away — what
+        # it costs is one of three tries at being wrong in the whole round. The
+        # hint `counted` carries shows both sides, which is how he gets it next
+        # time rather than guessing again.
+        points = round.points + 1
+        lives = rules.lives
+        caught = lives is not None and points >= lives
+        tripped = replace(
+            counted,
+            points=points,
+            failed=caught,
+            # No hint on the way out: the failure screen owns the display, for
+            # the reason `tick` gives on the same path.
+            hint=None if caught else question,
+        )
+        return tripped, Outcome.LOST if caught else Outcome.WRONG
+
     if not correct and not rules.wrong_advances:
         # The ball is still in the air; he may retype while it falls. Touching
         # the queue here would put the same fact in the deck twice.
@@ -621,13 +738,20 @@ def apply(round: Round, given: int) -> tuple[Round, Outcome]:
     else:
         parts = round.parts
     launched = parts >= rules.target
+    opened = correct and _opens_a_lock(rules, parts)
     updated = replace(
         counted,
         queue=_advance(round, retry=None if correct else question),
         parts=parts,
         launched=launched,
         seconds_left=_credit(round) if correct else round.seconds_left,
+        # The lines of the lock he is on, so the panel can show what he has
+        # already opened. Cleared as each vault swings, because the next lock
+        # starts empty and a panel that kept growing would run off the screen.
+        cracked=() if opened else (*round.cracked, question) if correct and rules.locks else round.cracked,
     )
     if launched:
         return updated, Outcome.WON
+    if opened:
+        return updated, Outcome.CRACKED
     return updated, Outcome.CORRECT if correct else Outcome.WRONG

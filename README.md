@@ -2,7 +2,7 @@
 
 A desktop math-fact game built for one specific second grader.
 
-Three games, one question pool. In **Rocket Builder**, every fact he gets right
+Four games, one question pool. In **Rocket Builder**, every fact he gets right
 bolts another part onto a rocket; every miss knocks the top part off. Ten parts
 on and it counts down and launches — but an alien saucer is closing in the whole
 time, and if the clock runs out first it takes the rocket instead. In **Tennis
@@ -13,9 +13,10 @@ downfield is called, he clicks where that number goes on the field, and then has
 to answer a math fact before the ball lands to secure the catch.
 
 The point is fluency: number bonds recalled fast enough to be useful, rather than
-counted out on fingers. The pass is the exception, and deliberately so — where
-a number sits on a line is the one thing here that cannot be answered from a
-memorised table.
+counted out on fingers. Two of them are deliberately not that. Where a number
+sits on a line cannot be answered from a memorised table, and neither is
+`7 + 6 = ? + 5`, which is about what `=` *means* rather than what `7 + 6` is.
+That one is the only cabinet with no clock in it at all.
 
 ```sh
 uv run mathr
@@ -120,6 +121,65 @@ tried and taken out — they are what a real field looks like, and they are also
 benchmark to count along instead of a distance to judge. `STRIPE_EVERY = 5` in
 `shell/draw.py` puts them back.
 
+**Code Breaker**
+
+No clock anywhere. What this mode measures is whether he *sees* a relation
+rather than computing his way to it, and that shows up as answering faster than
+his own arithmetic — which a clock ticking at him would suppress.
+
+The whole left of the screen is a safe: hinges down one side, bolts down the
+other, three alarm lamps along the top rail, and a dial beside the combination.
+The intercepted lines are behind its glass, each with one number missing:
+
+```
+┌──────────────────────────────────────┐
+│◉  LOCK 1 OF 3        ALARMS ● ○ ○    │
+│   ┌──────────────────────────────┐   │
+│   │ 4 + 8 = 5 + 7            ●   │   │▐▌ bolt
+│   │ 10 - 7 = 15 ÷ 5          ●   │   │
+│   │ 2 + 3 = 5 + ?                │   │▐▌
+│   │ ▬▬ ▬▬ ▬▬ ▬▬                  │   │
+│◉  └──────────────────────────────┘   │▐▌
+│  CODE  5   15  __  __    (◍) dial    │
+└──────────────────────────────────────┘
+```
+
+- **Every number he works out drops into the combination**, and the dial turns a
+  notch as it lands. That is the whole mapping: the maths *is* the code, rather
+  than a score being kept next to it.
+- **Lines below the one he is on stay encrypted** — a row of blocks, so he can
+  see how much is left without reading ahead. A lock he could scan in advance is
+  a worksheet.
+- **A round is three locks, of four, five and six lines.** Filling a
+  combination spins the dial, throws the three bolts, and holds the whole lock
+  open in green — his lines and his numbers, still there to look at — before the
+  next one loads. Three wins in a round rather than one, and the last lock is
+  meant to feel longer than the first.
+- **A wrong answer lights one of the three alarm lamps** and the line stays put
+  — he still has to open it. The number line comes up showing both sides, which
+  is how he gets it next rather than guessing again. Reading it and then typing
+  costs nothing more. **Three alarms and the vault locks down.**
+- **The third lock is the door itself.** It swings open on its hinges and the
+  safe is full of gold — bars, coins and gems on two shelves — under
+  *VAULT OPEN!*
+
+The lines are built from the level's own facts, so every cabinet still leads to
+the same twelve cards. Four shapes, in rough order of how much relation they
+need: `7 + 6 = ? + 5` (two expressions, neither readable on its own),
+`3 + 5 = ? + 3` (commuted), `12 ÷ 2 = ? + 4` (the value split in two), and
+plain `7 + 6 = ?`, which is the question the other three cabinets already ask
+and is deliberately the rarest.
+
+*Everything* makes the best panel, because it can put `10 - 7` and `15 ÷ 5` on
+opposite sides of the same `=`. The division levels lean entirely on splitting —
+they have no two expressions sharing a value and nothing to commute — which is
+the reason that shape exists at all.
+
+**A miss shows both sides at once**, over one shared span, with a line under it
+saying whether they landed together. One span on purpose: two lines each scaled
+to their own numbers would put both endpoints in the same place, which is the
+opposite of the point.
+
 ### The levels
 
 | Level | What it drills | Pace |
@@ -130,12 +190,26 @@ benchmark to count along instead of a distance to judge. `STRIPE_EVERY = 5` in
 | **Times Two** | `2 × 0` through `2 × 10`, both ways round | 5s a part |
 | **Times Five** | `5 × 0` through `5 × 10` | 5s a part |
 | **Times Ten** | `10 × 0` through `10 × 10` | 5s a part |
-| **Everything** | every fact above, 278 of them, shuffled together | 5s a part |
+| **Divide by Two** | `2 ÷ 2` through `20 ÷ 2`, both ways round | 5s a part |
+| **Divide by Five** | `5 ÷ 5` through `50 ÷ 5` | 5s a part |
+| **Divide by Ten** | `10 ÷ 10` through `100 ÷ 10` | 5s a part |
+| **Everything** | every fact above, 338 of them, shuffled together | 5s a part |
 
-Division has a dimmed column on the level screen, and *Tricky Facts* a dimmed
-button — both reserved, neither built. The multiplication levels ask only
-`a × b = ?` and `a × ? = c`; the two forms that would complete the set are
-division, which is exactly what is not built yet.
+The multiplication levels ask only `a × b = ?` and `a × ? = c`; the two forms
+that would complete the set are division, and they are their own column rather
+than two more questions inside *Times Two* — so a division level asks
+`12 ÷ 2 = ?` and `12 ÷ ? = 6` and nothing else. The tables stop at ten and there
+are no remainders. Nothing divides by nought: `0 ÷ ? = 0` is true of every
+divisor, so that pair is not askable and the division levels hold twenty facts
+where the times levels hold twenty-two.
+
+Division is also the one operation whose answer is *not* where its number line
+ends. `12 ÷ 2` draws six hops of two and lands on 12 — the number already in the
+question — so the hint captions the hop count, and the picture is exactly the
+one `2 × 6 = 12` draws.
+
+*Tricky Facts* keeps its dimmed button in the Everything column: reserved, not
+built.
 
 Both question forms are always asked, in both orientations. `3 + ? = 5` matters
 as much as `3 + 2 = ?`, because the missing addend *is* the number bond — and that is the

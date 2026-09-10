@@ -29,6 +29,16 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
   tennis balls or footballs.** Part names, coordinates and art live in
   `shell/draw.py`. This is the seam that lets every mode reuse every level; the moment the reducer imports a part name, the next
   mode has to fake one or fork it.
+- **A mode can differ in its *items* rather than its rules.** Three cabinets are
+  three readings of `Rules`; Code Breaker is not. It could run on `ROCKET`'s
+  rules unchanged and still be a different game, because a `Sentence` is not a
+  `Fact`.
+  That is why `Round.queue` holds `Item = Question | Sentence` — everything
+  downstream of it touches only `.key`, `.prompt`, `.answer` and the route, so
+  one queue serves both. A *parallel* deck beside the queue is the trap: `tick`
+  charges `on_current` to `queue[0]`, so the time he spends on a sentence lands
+  in `Tally.seconds` for a fact he was never asked, and the symptom is bad deck
+  ordering **in a different cabinet**.
 - **A mode is not only a renderer.** `Rules` (`ROCKET`, `TENNIS`, `FOOTBALL`)
   says what the clock does, what a wrong answer costs, what an empty clock
   means, and whether the round stops every so often to ask for a placement.
@@ -49,14 +59,16 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
-    facts.py      Fact, Question, Strategy, Level, the seven enumerated pools
+    facts.py      Fact, Question, Strategy, Level, the ten enumerated pools,
+                  Side / Sentence / sentences: the code panel's derived deck
     round.py      Round, Rules, Tally, Aim, Outcome,
                   new_round / apply / tick / dismiss / place
   storage.py      Progress, Settings, LevelRecord; load / save / merge
   shell/
     app.py        App: event loop, Mode, three screens, all the wiring
     draw.py       palette, rocket, alien, court, field, runner, cabinets,
-                  buttons, number line, Layout, the transform
+                  the safe and its hoard, buttons, number line, Layout,
+                  the transform
     audio.py      twelve synthesized clips, no asset files
 tests/
   test_facts.py   pool contents, key stability, both orientations
@@ -67,6 +79,8 @@ tests/
   test_scaling.py the design-surface transform, threat closeness, court and
                   field geometry, the cabinet at any height
   test_select.py  the deck weighting, and that an unweighted deck never moved
+  test_sentences.py  what a line is, and that every pool can build a deck
+  test_crack.py   locks, the panel, and alarms a wrong answer trips
 ```
 
 `Fact.strategy` is the route to the answer as numbers — a start and a list of
@@ -77,9 +91,21 @@ an empty jump list (`2 × 0`), and the ten equal jumps of `10 × 10`.
 
 `domain/facts.py` builds each addition level from one rule: each number-bond
 pair yields four questions (`a+b=?`, `a+?=c`, `c−a=?`, `c−?=b`). A times pair
-yields two (`a×b=?`, `a×?=c`) — the other two would be division, which is not
-built. Pools are enumerated, not generated — 24 / 44 / 144 / 22 / 22 / 22, and
-`everything` is their concatenation (278), pinned by `test_pool_sizes`.
+yields two (`a×b=?`, `a×?=c`); the other two are division, and they live in
+their own column via `_divide_pair`, which `_divided` draws from `range(1, 11)`
+rather than `range(11)` — `0 ÷ ? = 0` is true of every divisor, so the zero pair
+would sit in the deck being marked wrong forever. Pools are enumerated, not
+generated — 24 / 44 / 144 / 22 / 22 / 22 / 20 / 20 / 20, and `everything` is
+their concatenation (338), pinned by `test_pool_sizes`.
+
+**Division's answer is the hop count, not where the line ends.** Every other
+operation's route lands on its own answer, so the highlighted last dot *is* the
+answer; `12 ÷ 2` draws six hops of two and lands on 12, which is the number he
+was already given. `test_every_strategy_lands_on_the_answer` asserts this per
+operation rather than universally, and `draw_number_line`'s `caption` — composed
+by `app.hint_caption`, the shell's only look at `Fact.op` — says the count out
+loud. Forcing the invariant instead yields `Strategy(0, (4,))` for `12 ÷ 3`: one
+hop to the answer, a green test, and a hint that mentions neither 12 nor 3.
 
 A `Question` is a `Fact` plus `flipped`, which puts the `=` on either side. It
 delegates `.answer` and `.key`, so orientation never reaches storage.
@@ -100,6 +126,13 @@ These are the dials, and they are meant to be turned after watching him play.
 | `TENNIS.target` | `domain/round.py` | 10 | returns needed to win |
 | `WEIGHT_FLOOR` | `domain/round.py` | 0.5 | how far a fast fact sinks in the deck |
 | `WEIGHT_CEILING` | `domain/round.py` | 4.0 | and how far one slow fact can rise |
+| `LOCKS` | `domain/round.py` | 4, 5, 6 | lines per lock, and how many locks |
+| `ALARMS` | `domain/round.py` | 3 | wrong answers before the vault locks down |
+| `SENTENCE_DECK` | `domain/facts.py` | 40 | lines drawn per code round |
+| `_SHAPES` | `domain/facts.py` | 5/3/3/1 | both-sides, commuted, split, bare |
+| `UNLOCK_HOLD` | `shell/app.py` | 1.1s | how long a swung vault is held |
+| `SWING_DELAY` | `shell/app.py` | 0.5s | bolts back on a full combination before the door moves |
+| `SWING_TIME` | `shell/app.py` | 1.5s | and how long the leaf takes to swing off the hoard |
 | `PLACE_MAX` | `domain/round.py` | 100 | the span of the field, in yards |
 | `PLACE_TOLERANCE` | `domain/round.py` | 6 | how far off still completes the pass |
 | `PLACE_LIVES` | `domain/round.py` | 3 | placements missed before a turnover |
@@ -261,7 +294,56 @@ as tennis — it compiled, it drew, and nothing raised. The remaining
 countdown) and fail safe: a mode that is not the rocket simply does not take
 them.
 
-**A dimmed cabinet must not be clickable.** The `click` loop skips the `"soon"`
+**`rules.lives` alone is three lives nothing can spend.** `points` is
+incremented in `tick` when the bank empties and nowhere else, so lives mean
+"empty-clock events survived" unless `wrong_costs_life` says otherwise. That is
+why `new_round` raises for an untimed round with lives and no such dial — an
+untimed tennis match can be neither won nor lost, and nothing else would say so.
+It is read in `apply`, not `tick`: the alarm is tripped by a wrong *answer*.
+
+**A wrong answer that trips an alarm must be handled in `submit`.** `apply` can
+now end a round — it is the only reducer a `wrong_costs_life` mode goes through
+— and every other mode's loss arrives from `tick` or from `throw`. Without the
+`Outcome.LOST` branch in `submit` the domain is over while the shell sits there
+with a dead keypad and no failure screen, and nothing raises.
+
+**A swung lock must be held with its own lines and its own digits.** `apply`
+clears `cracked` and `Round.lock` derives the *next* lock on the same frame, so
+the one moving reward in this mode was the panel resetting and the combination
+emptying — the code being erased. `Play.opened` holds the lock the shell has
+just finished for as long as it is shown, and `App.opening` returns `None`
+rather than `0.0` when nothing is swinging: a swing *starts* at zero, and a
+renderer gating on the number alone spends that first frame drawing the next
+lock, empty.
+
+**`UNLOCK_HOLD` means nothing unless `submit` sets it.** `submit` sets
+`flash_left = FLASH_TIME` for every outcome, and the bolt animation divides by
+`UNLOCK_HOLD`. Without the `CRACKED` branch the bolts start 59% drawn back and
+finish in 0.45s, and the constant in the table above describes nothing that
+happens.
+
+**The rail, the combination and the dial are *on* the door.** `draw_treasure`
+repaints `CODE_DOOR`'s face before it draws the chamber, because `render_code`
+has already drawn all three on this frame and a door that has swung away cannot
+still be showing them. Symptom otherwise: "LOCK 3 OF 3" and the alarm lamps
+floating over the open safe.
+
+**A line below the one he is on must stay encrypted.** `draw_panel` draws a row
+of blocks for anything past `active`. Drawing the real sentences is the
+yard-stripe trap again: he reads ahead, works the easy ones first in his head,
+and the lock stops being a sequence.
+
+**`cracked` is cleared as each vault swings.** It holds only the lines of the
+lock he is on, because the panel draws all of them and three locks' worth would
+run off the bottom of the screen. `Round.lock` is derived from `parts` alone for
+the reason `placing` is derived — a stored lock index has to be written on every
+path that moves `parts`, and one missed path is a vault that opens twice.
+
+**`Rules.locks` must add up to `Rules.target`.** `new_round` raises otherwise:
+a mismatch means the last vault never swings, or the round is won partway
+through a lock with lines still showing on the panel.
+
+**A dimmed cabinet must not be clickable.****A dimmed cabinet must not be clickable.** The `click` loop skips the `"soon"`
 entry in `CABINETS`; without that it would set `self.mode` to a mode that does
 not exist and `App.game` would raise a `KeyError` on the next frame.
 
@@ -319,8 +401,12 @@ imports `facts`; reaching back for `Tally` closes an import cycle that Python
 reports as a partially-initialised module from whichever side imported first — a
 message naming neither the cycle nor the mistake.
 
-**Untimed launches must not touch `launches`.** They go to `practice`, or the
-number that means "I beat it" is farmable from the menu toggle. Tennis is always
+**A round that cannot be lost must not touch `launches`.** `storage._fold` asks
+`Round.losable`, not `Round.timed`: what makes a win farmable is having no way
+to lose, not having no clock. The rocket with the Timer toggle off has neither,
+so it still folds to `practice`; Code Breaker has no clock and three alarms a
+wrong answer trips, so its win is a launch. Asking `timed` was right until a mode
+arrived that could be lost without one. Tennis is always
 timed for the same reason it has no untimed form, and `new_round` raises rather
 than building a round with lives and no clock.
 
@@ -363,8 +449,9 @@ level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD` in
 `app.py`), so a fourth row needs a layout decision, not just an id in a tuple.
 Update `test_pool_sizes` — the `everything` total moves too.
 
-**A fourth game mode.** Add a `Rules` to `domain/round.py` and a `Mode` to
-`MODES` in `app.py` (title, clip map, a `draw.Layout`, noun and what a part is
+**A fifth game mode.** The 2x2 grid is **full** — a fifth cabinet is a layout
+decision before it is anything else. Otherwise: add a `Rules` to
+`domain/round.py` and a `Mode` to `MODES` in `app.py` (title, clip map, a `draw.Layout`, noun and what a part is
 worth in it, hold times, `rally` / `warns`), a renderer in the `render_play` dispatch, its clips
 in `audio.py`, and take the `"soon"` cabinet's rect in `CABINETS` — the grid is
 full at four, so a fifth is a layout decision, not an entry in a tuple. Ask

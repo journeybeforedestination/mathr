@@ -28,10 +28,15 @@ the one a right/wrong count cannot see.
 - Multiplication via skip counting by fives and tens. **Built** — `twos`,
   `fives_times` and `tens_times`, plus an `everything` pool derived from every
   other level's facts.
-- **Division.** Reserved as a dimmed column on the level screen. The
-  multiplication pools deliberately stop at `a × b = ?` and `a × ? = c`; the
-  missing two forms *are* division, so this is a content decision (how far the
-  tables go, whether remainders exist) and not a code one.
+- **Division.** **Built** — `divide_two`, `divide_five`, `divide_ten`, and the
+  column is lit. The original entry called it "a content decision (how far the
+  tables go, whether remainders exist) and not a code one", and it was wrong
+  about the second half in one specific way worth keeping: every fact until now
+  landed on its own answer, and a division fact does not. `12 ÷ 2` draws six
+  hops of two and ends on 12, so `test_every_strategy_lands_on_the_answer`
+  became per-operation and `draw_number_line` grew a caption. The content half
+  was as cheap as promised — tables to ten, no remainders, and one rule about
+  nought, since `0 ÷ ? = 0` is true of every divisor.
 
 ## A second game mode
 **Built** — Tennis Match. Worth keeping the original entry's claim next to what
@@ -50,6 +55,35 @@ at all.
 The remaining candidates — a growing city, a rescue climb, a race — each want
 their own read of that bundle. A mode with no threat can still simply run
 untimed.
+
+**Built again** — the relational `=` cabinet, and it broke the frame this entry
+was arguing inside. Tennis proved a mode differs in *rules* rather than rendering; the booth
+differs in neither. It could run on `ROCKET`'s rules and still be a different
+game, because what changed is what a question **is**. That was the third seam,
+deferred twice as a heterogeneous queue and reopened here: `Round.queue` now
+holds `Question | Sentence`, and `_advance`, `Tally` and `apply` did not move,
+because they only ever touched `.key` and `.answer`. What it did cost was two
+`Rules` dials (`judges`, `wrong_costs_life`), a `judge` reducer beside `apply`
+and `place`, and one overturned invariant — `storage._fold` had to start asking
+whether a round was *losable* rather than whether it was *timed*.
+
+It shipped first as **Replay Booth**: a sentence shown whole, judged
+Same/Different, and repaired if overturned. It worked, it was tested, and it was
+not a game — a static panel with a pip counter, no object on screen that ever
+changed, and the feedback backwards, since a wrong answer got a number line and
+a right one got nothing. The clock had been removed for a good reason and
+nothing replaced the tension it was carrying.
+
+It is now **Code Breaker**: every line is an open sentence, the answers *are*
+the combination, and a round is three locks of four, five and six lines. What
+the rebuild cost is the true/false half of the lesson — `8 = 8` and
+`3 + 5 = 5 + 3` cannot be asked as a blank — and what it bought is that the
+maths is the reward rather than a score kept beside it. `judge`, `repairing` and
+four outcomes were deleted rather than left unused. Worth keeping the two
+side by side, because the first was the design the research argued for and the
+second is the one a seven-year-old will play.
+
+The 2x2 grid is now full. A fifth mode is a layout decision first.
 
 ## Adaptive difficulty
 **Built** — see *Learning feedback* in `plan.md`. The data answered the question

@@ -2,7 +2,12 @@ import random
 
 from mathr.domain.facts import LEVELS, LEVELS_BY_ID, Question, Strategy, shuffled
 
-TIMES = {"+": lambda a, b: a + b, "-": lambda a, b: a - b, "×": lambda a, b: a * b}
+TIMES = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "×": lambda a, b: a * b,
+    "÷": lambda a, b: a // b,
+}
 
 
 def test_every_fact_is_true():
@@ -47,7 +52,10 @@ def test_pool_sizes():
         "twos": 22,
         "fives_times": 22,
         "tens_times": 22,
-        "everything": 278,
+        "divide_two": 20,
+        "divide_five": 20,
+        "divide_ten": 20,
+        "everything": 338,
     }
 
 
@@ -68,7 +76,9 @@ def test_each_topic_asks_its_own_operations():
         assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"+", "-"}
     for level_id in ("twos", "fives_times", "tens_times"):
         assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"×"}
-    assert {fact.op for fact in LEVELS_BY_ID["everything"].facts} == {"+", "-", "×"}
+    for level_id in ("divide_two", "divide_five", "divide_ten"):
+        assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"÷"}
+    assert {fact.op for fact in LEVELS_BY_ID["everything"].facts} == {"+", "-", "×", "÷"}
 
 
 def test_keys_are_unique_and_stable():
@@ -77,6 +87,7 @@ def test_keys_are_unique_and_stable():
         assert len(keys) == len(set(keys))
     assert LEVELS_BY_ID["fives"].facts[1].key == "0+5=5@b"
     assert LEVELS_BY_ID["twos"].facts[6].key == "2×3=6@result"
+    assert LEVELS_BY_ID["divide_two"].facts[1].key == "2÷2=1@b"
 
 
 def test_bridge_facts_cross_ten():
@@ -100,8 +111,32 @@ EVERY_FACT = LEVELS_BY_ID["everything"].facts
 
 
 def test_every_strategy_lands_on_the_answer():
+    """Every operation but one draws a route ending on its own answer.
+
+    Division cannot: `12 ÷ 3 = 4` draws four hops of three and lands on *12*,
+    because the answer is how many hops there were. Asserted per operation
+    rather than universally, so the one that is different says so.
+    """
     for fact in EVERY_FACT:
-        assert fact.strategy.end == fact.result, fact.key
+        if fact.op == "÷":
+            assert fact.strategy.end == fact.a, fact.key
+            assert len(fact.strategy.jumps) == fact.result, fact.key
+        else:
+            assert fact.strategy.end == fact.result, fact.key
+
+
+def test_division_hops_count_the_answer():
+    """The same picture `2 × 6 = 12` draws, which is the point of drawing it."""
+    fact = next(f for f in EVERY_FACT if (f.a, f.op, f.b) == (12, "÷", 2))
+    assert fact.strategy == Strategy(0, (2,) * 6)
+    assert fact.result == len(fact.strategy.jumps) == 6
+
+
+def test_no_division_by_nought():
+    """`0 ÷ ? = 0` is true of every divisor, so the pair is not askable."""
+    for level_id in ("divide_two", "divide_five", "divide_ten"):
+        for fact in LEVELS_BY_ID[level_id].facts:
+            assert fact.a > 0 and fact.b > 0 and fact.result > 0, fact.key
 
 
 def test_a_bridging_fact_stops_at_ten():

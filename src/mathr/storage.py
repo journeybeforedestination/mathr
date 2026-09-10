@@ -138,7 +138,11 @@ def save(path: Path, progress: Progress) -> None:
 
 
 def _fold(record: LevelRecord, round: Round) -> LevelRecord:
-    if not round.timed:
+    # `losable`, not `timed`: what makes a win farmable is having no way to
+    # lose, not having no clock. The rocket with the Timer toggle off still has
+    # neither, so it still folds to `practice`; the booth has no clock and three
+    # lives a blown call spends, so a perfect game there is a launch.
+    if not round.losable:
         return replace(record, practice=record.practice + round.launched)
     if round.failed:
         return replace(record, failures=record.failures + 1)

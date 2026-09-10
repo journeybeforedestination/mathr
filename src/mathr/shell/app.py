@@ -9,6 +9,8 @@ import pygame
 
 from ..domain.facts import LEVELS, LEVELS_BY_ID
 from ..domain.round import (
+    ALARMS,
+    CODE,
     FOOTBALL,
     PLACE_MAX,
     PLACE_TOLERANCE,
@@ -35,6 +37,9 @@ LIFTOFF = 2.6
 FLASH_TIME = 0.45
 ABDUCT_BEAM = 1.6
 THROW_HOLD = 1.3  # how long a finished play is held before the next call
+UNLOCK_HOLD = 1.1  # how long a vault is held open before the next lock loads
+SWING_DELAY = 0.5  # bolts back on a full combination, before the leaf moves
+SWING_TIME = 1.5  # and how long the door takes to swing off the hoard
 
 #: What a placement's end says, and in what colour. Held for `THROW_HOLD` with
 #: the pennants still up, which is also why the next call cannot be clicked yet.
@@ -47,6 +52,10 @@ VERDICTS = {
 }
 
 NEXT_PASS = Button(pygame.Rect(510, 716, 260, 76), "Next pass", "next", draw.PANEL)
+
+#: The call. Two buttons and no keypad: the keypad below is for the repair that
+#: only a correct overturn opens, and a keystroke must never stand in for one of
+#: these — see `press`.
 ROCKET_HEART = (draw.ROCKET_ORIGIN[0] + draw.BODY_X, draw.ROCKET_ORIGIN[1] + 300)
 
 
@@ -78,6 +87,9 @@ class Mode:
     lose_hold: float  # before *Try again* appears
     rally: bool = False  # a ball flies between questions, and the clock waits
     warns: bool = False  # the bank pulses as it empties
+    #: A sentence is three times the width of `8 + 5 = ?`, and at the size the
+    #: other cabinets ask a question it runs off both ends of the monitor.
+    prompt_font: str = "big"
 
 
 MODES = {
@@ -147,17 +159,39 @@ MODES = {
         0.7,
         warns=True,
     ),
+    "code": Mode(
+        "code",
+        "Code Breaker",
+        CODE,
+        {
+            Outcome.CORRECT: "tumbler",
+            Outcome.CRACKED: "unlock",
+            Outcome.WRONG: "alarm",
+            Outcome.WON: "cheer",
+            Outcome.LOST: "alarm",
+        },
+        draw.CODEBREAK,
+        "lines",
+        1,
+        "VAULT OPEN!",
+        "LOCKED DOWN",
+        "you cracked {units} lines",
+        3.4,
+        0.9,
+        prompt_font="mid",
+    ),
 }
 
 BACK = Button(pygame.Rect(40, 40, 150, 64), "Back", "back")
 
-#: Two rows of two. The fourth is drawn and never clicked — see `click`, which
-#: skips it, and `draw_card`, which will not hover it.
+#: Two rows of two, and now full. Nothing is dimmed today, but the `"soon"`
+#: guards stay: `click` skips that id and `draw_card` will not hover it, which
+#: is what a fifth placeholder would need again.
 CABINETS = (
     ("rocket", pygame.Rect(160, 186, 400, 220)),
     ("tennis", pygame.Rect(720, 186, 400, 220)),
     ("football", pygame.Rect(160, 420, 400, 220)),
-    ("soon", pygame.Rect(720, 420, 400, 220)),
+    ("code", pygame.Rect(720, 420, 400, 220)),
 )
 
 MENU_BUTTONS = (
@@ -173,7 +207,11 @@ ROW_Y = (216, 356, 496)
 CARD = (270, 120)
 COLUMN_TITLES = ("Addition", "Multiply", "Division", "Everything")
 
-LEVEL_COLUMNS = (("fives", "tens", "bridge"), ("twos", "fives_times", "tens_times"))
+LEVEL_COLUMNS = (
+    ("fives", "tens", "bridge"),
+    ("twos", "fives_times", "tens_times"),
+    ("divide_two", "divide_five", "divide_ten"),
+)
 
 LEVEL_BUTTONS = tuple(
     Button(pygame.Rect(COLUMN_X[column], ROW_Y[row], *CARD), LEVELS_BY_ID[level_id].name, level_id)
@@ -188,10 +226,7 @@ LEVEL_BUTTONS = tuple(
 )
 
 #: Drawn, never clickable — see `draw.draw_card`, which will not hover these.
-SOON_BUTTONS = tuple(
-    Button(pygame.Rect(COLUMN_X[2], ROW_Y[row], *CARD), label, "soon")
-    for row, label in enumerate(("Divide by 2", "Divide by 5", "Divide by 10"))
-) + (Button(pygame.Rect(COLUMN_X[3], ROW_Y[2], *CARD), "Tricky Facts", "soon"),)
+SOON_BUTTONS = (Button(pygame.Rect(COLUMN_X[3], ROW_Y[2], *CARD), "Tricky Facts", "soon"),)
 
 FAIL_BUTTONS = (
     Button(pygame.Rect(660, 500, 260, 92), "Try again", "retry", draw.PANEL),
@@ -257,6 +292,20 @@ class Play:
     throw_left: float = 0.0
     jump: tuple[int, int] | None = None  # a sack, drawn as a hop back down the line
     review: tuple[int, int, bool] | None = None  # a miss being explained; last is "was a sack"
+    opened: tuple = ()  # the lines of a lock that has just swung, while it is shown
+
+
+def hint_caption(question) -> str | None:
+    """What the number line cannot say by itself, which is division only.
+
+    Every other operation ends its route on its own answer, so the highlighted
+    last dot *is* the answer. `12 ÷ 2` ends on 12 — the number already in the
+    question — and the answer is how many hops it took to get there.
+    """
+    fact = question.fact
+    if fact.op != "÷":
+        return None
+    return f"{fact.result} hop{'' if fact.result == 1 else 's'} of {fact.b}"
 
 
 class App:
@@ -427,9 +476,16 @@ class App:
 
     def start(self, level_id: str) -> None:
         mode = self.game
-        # The Timer toggle belongs to the rocket. A rally has no untimed form:
-        # without a deadline the ball has nowhere to be.
-        timed = True if mode.rules.lives is not None else self.progress.settings.timer
+        # The Timer toggle belongs to the rocket. A rally has no untimed form —
+        # without a deadline the ball has nowhere to be — and the booth is the
+        # other way round: what it measures is reasoning faster than his own
+        # arithmetic, and a clock suppresses the thing being measured.
+        if mode.rules.locks:
+            timed = False
+        elif mode.rules.lives is not None:
+            timed = True
+        else:
+            timed = self.progress.settings.timer
         self.play = Play(
             round=new_round(
                 LEVELS_BY_ID[level_id],
@@ -480,6 +536,10 @@ class App:
             return
         before = play.round.parts
         struck = self.ball(play) if self.game.rally else None
+        # The lock as it stands *before* the answer: if this is the one that
+        # swings it, the domain will have cleared `cracked` by the time the
+        # shell has anything to draw.
+        lock_lines = (*play.round.cracked, play.round.current) if self.game.rules.locks else ()
         play.round, outcome = apply(play.round, int(play.entry))
         play.entry = ""
         play.flash = outcome
@@ -491,6 +551,20 @@ class App:
             play.falling.append(draw.knock_off(self.parts[before - 1], self.rng))
         if outcome is Outcome.SECURED:
             play.throw_left = THROW_HOLD
+        if outcome in (Outcome.CRACKED, Outcome.WON) and lock_lines:
+            play.opened = lock_lines
+        if outcome is Outcome.CRACKED:
+            # Not `FLASH_TIME`: a swung vault is the one moving reward here and
+            # gets the hold the tuning table has always said it does. Without
+            # this the bolts start 59% back and finish in 0.45s.
+            play.flash_left = UNLOCK_HOLD
+        if outcome is Outcome.LOST:
+            # Only a mode whose lives a wrong *answer* spends reaches this: for
+            # every other mode the round ends in `tick` or in `throw`, and
+            # without this branch the domain is over while the shell sits there
+            # with a dead keypad and no failure screen.
+            self.lose()
+            return
         if outcome is Outcome.WON:
             play.since_launch = 0.0
             self.record()
@@ -679,6 +753,8 @@ class App:
                 draw.draw_mini_court(self.canvas, screen, self.clock_now)
             elif mode_id == "football":
                 draw.draw_gridiron(self.canvas, screen, self.clock_now)
+            elif mode_id == "code":
+                draw.draw_mini_vault(self.canvas, screen, self.clock_now)
         labels = {
             "sound": f"Sound: {'On' if self.progress.settings.sound else 'Off'}",
             "timer": f"Timer: {'On' if self.progress.settings.timer else 'Off'}",
@@ -690,8 +766,9 @@ class App:
         draw.text(self.canvas, self.fonts["big"], self.game.title, (640, 116), draw.INK)
         self.button(BACK)
         for index, title in enumerate(COLUMN_TITLES):
-            colour = draw.DIM if title == "Division" else draw.ACCENT
-            draw.text(self.canvas, self.fonts["mid"], title, (COLUMN_X[index] + CARD[0] // 2, 176), colour)
+            draw.text(
+                self.canvas, self.fonts["mid"], title, (COLUMN_X[index] + CARD[0] // 2, 176), draw.ACCENT
+            )
         for button in SOON_BUTTONS:
             draw.draw_button(self.canvas, self.fonts["small"], button, False, dimmed=True)
         for button in LEVEL_BUTTONS:
@@ -720,6 +797,7 @@ class App:
             "rocket": self.render_rocket,
             "tennis": self.render_court,
             "football": self.render_field,
+            "code": self.render_code,
         }[self.mode](play)
 
         self.button(BACK)
@@ -739,14 +817,7 @@ class App:
             self.render_win(play)
             return
         if play.round.hint is not None:
-            draw.draw_number_line(
-                self.canvas,
-                self.fonts["mid"],
-                self.fonts["tiny"],
-                play.round.hint.strategy,
-                play.round.hint.prompt,
-                self.game.layout.hint,
-            )
+            self.render_hint(play)
         if play.round.placing is None:
             self.render_entry(play)
         # Nothing else while a throw is called: no keypad, no question. The
@@ -904,21 +975,104 @@ class App:
         verb = "you picked the" if was_sack else "you threw to the"
         return f"{verb} {aimed}, {abs(aimed - called)} {side} the {called}"
 
+    def render_hint(self, play: Play) -> None:
+        """Two routes where the items are sentences, one where they are facts.
+
+        Dispatched on what the mode asks rather than on the type of the item, for
+        the reason `render_play` dispatches through a dict: a mode handed the
+        wrong hint would draw, be wrong, and raise nothing.
+        """
+        hint = play.round.hint
+        if self.game.rules.locks:
+            draw.draw_two_routes(
+                self.canvas,
+                self.fonts["mid"],
+                self.fonts["tiny"],
+                hint.strategies,
+                hint.prompt,
+                self.game.layout.hint,
+            )
+            return
+        draw.draw_number_line(
+            self.canvas,
+            self.fonts["mid"],
+            self.fonts["tiny"],
+            hint.strategy,
+            hint.prompt,
+            self.game.layout.hint,
+            hint_caption(hint),
+        )
+
+    def render_code(self, play: Play) -> None:
+        round_ = play.round
+        index, done, size = round_.lock
+        opening = self.opening(play)
+        held = play.opened if opening is not None else ()
+        if held:
+            # The lock that just swung, held with its lines and its digits still
+            # on the door. The domain cleared `cracked` and `lock` moved on to
+            # the one still shut on the same frame, so without this the one
+            # moving reward in the mode is the code being wiped.
+            lines, active, size = held, len(held), len(held)
+            if not round_.over:
+                index -= 1
+        else:
+            # The lines of this lock: the ones already open, then the one he is
+            # on and the ones still dark behind it.
+            lines, active = (*round_.cracked, *round_.queue[: size - done]), done
+        draw.draw_door(
+            self.canvas, self.fonts["small"],
+            index, len(round_.rules.locks), round_.points, ALARMS,
+        )
+        draw.draw_panel(self.canvas, self.fonts[self.game.prompt_font], lines, active)
+        draw.draw_bolts(self.canvas, opening or 0.0)
+        draw.draw_lock(
+            self.canvas, self.fonts["mid"], self.fonts["small"],
+            tuple(line.answer for line in lines[:active]), size, opening or 0.0,
+        )
+
+    def opening(self, play: Play) -> float | None:
+        """How far the bolts have drawn back, or `None` if no lock is swinging.
+
+        `None` rather than zero because a swing *starts* at zero: on the frame a
+        lock is cracked there is nothing back yet, and a renderer that read the
+        number alone would spend that frame showing the next lock, empty.
+
+        The win is the third lock swinging, so it opens the same way and then
+        keeps going: `SWING_DELAY` of thrown bolts on a full combination before
+        the leaf itself starts to move.
+        """
+        if play.since_launch is not None:
+            return min(1.0, play.since_launch / SWING_DELAY)
+        if play.flash is not Outcome.CRACKED or play.flash_left <= 0:
+            return None
+        return 1.0 - play.flash_left / UNLOCK_HOLD
+
     def render_entry(self, play: Play) -> None:
         layout = self.game.layout
-        if play.round.hint is None:
+        if play.round.hint is None and not self.game.rules.locks:
             # The hint carries its own prompt: in the rocket the queue has
             # already moved on, so drawing both would put two questions on
             # screen at once.
             draw.text(
-                self.canvas, self.fonts["big"], play.round.current.prompt, layout.prompt, draw.INK
+                self.canvas,
+                self.fonts[self.game.prompt_font],
+                play.round.current.prompt,
+                layout.prompt,
+                draw.INK,
             )
         box = layout.entry
         colour = draw.INK
         if play.flash_left > 0 and play.flash is not None:
             colour = (
                 draw.GOOD
-                if play.flash in (Outcome.CORRECT, Outcome.PLACED, Outcome.SECURED)
+                if play.flash
+                in (
+                    Outcome.CORRECT,
+                    Outcome.PLACED,
+                    Outcome.SECURED,
+                    Outcome.CRACKED,
+                )
                 else draw.BAD
             )
         pygame.draw.rect(self.canvas, draw.PANEL, box, border_radius=14)
@@ -933,6 +1087,13 @@ class App:
             count = int(COUNTDOWN - play.since_launch) + 1
             draw.text(self.canvas, self.fonts["huge"], str(min(3, count)), banner, draw.ACCENT)
             return
+        if self.mode == "code":
+            swing = (play.since_launch - SWING_DELAY) / SWING_TIME
+            if swing <= 0:
+                return  # the bolts are still going back; `render_code` owns the door
+            draw.draw_treasure(self.canvas, min(1.0, swing))
+            if swing < 0.55:
+                return  # the leaf is still over where the words go
         draw.text(self.canvas, self.fonts["huge"], self.game.won, banner, draw.ACCENT)
 
     def render_failure(self, play: Play) -> None:

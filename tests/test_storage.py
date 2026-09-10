@@ -3,6 +3,8 @@ import random
 
 from mathr.domain.facts import LEVELS_BY_ID
 from mathr.domain.round import (
+    CODE,
+    LINES_TO_CRACK,
     FOOTBALL,
     PARTS_TO_LAUNCH,
     TENNIS,
@@ -116,8 +118,25 @@ def test_abduction_records_a_failure_and_no_best_time():
 
 
 def test_untimed_launches_are_counted_apart():
+    """The Timer toggle must not make the number that means "I beat it"
+    farmable: with no clock the rocket has no way to lose either."""
     after = merge(Progress(), played(timed=False, corrects=PARTS_TO_LAUNCH))
     assert after.level("rocket", "fives") == LevelRecord(launches=0, practice=1, best_seconds=None)
+
+
+def test_a_code_win_is_a_launch_though_it_has_no_clock():
+    """`_fold` asks whether the round was losable, not whether it was timed. The
+    code cabinet has three alarms a wrong answer trips, so its win is not
+    farmable the way an untimed rocket launch would be."""
+    current = new_round(
+        LEVELS_BY_ID["tens"], random.Random(0), timed=False, rules=CODE, mode_id="code"
+    )
+    while not current.over:
+        current, _ = apply(current, current.current.answer)
+    assert current.parts == LINES_TO_CRACK
+    after = merge(Progress(), current)
+    assert after.level("code", "tens").launches == 1
+    assert after.level("code", "tens").practice == 0
 
 
 def test_walking_away_records_facts_but_no_launch():

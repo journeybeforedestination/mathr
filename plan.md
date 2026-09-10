@@ -1837,13 +1837,923 @@ count is of attempts, and a test should say so.
 
 Recorded in `ideas.md`, not built here: true/false number sentences (research
 §3.1, ranked second — the relational `=`, and the cheapest of the remaining
-ideas), guess-my-rule (§3.4), CGI-structured word problems (§3.3), and a
+ideas) — **since built, as Replay Booth; see that section below**, and the entry
+is worth reading next to this line, because "cheapest of the remaining ideas"
+was wrong: it was the one that reopened the heterogeneous queue. Also
+guess-my-rule (§3.4), CGI-structured word problems (§3.3), and a
 scaffolded field whose marks thin out as he improves. Spacing across days,
 mastery as a probability, and retirement of mastered facts stay where the
 previous section left them. A parent-facing view of `placements` is the same
 deferral as the parent view of weak facts, and belongs in the same entry.
 
 ---
+
+## Division: the third column
+
+### What changes
+
+The Division column on the level screen stops being dimmed. Three new levels —
+*Divide by Two*, *Divide by Five*, *Divide by Ten* — ask `12 ÷ 2 = ?` and
+`12 ÷ ? = 6`, twenty facts each, and `everything` grows from 278 facts to 338.
+The multiplication levels are untouched. The number line learns to draw a
+division fact as the skip count it is, and says how many hops that was, because
+a division fact is the first one whose answer is not a place on the line.
+
+No new mode, no new `Rules`, no storage version bump. This is the content
+decision `ideas.md` said it was, settled: the tables go to ten, there are no
+remainders, and `÷` is shown as a symbol rather than hidden behind `2 × ? = 12`.
+
+### The load-bearing decision: the answer is the hop count, not the endpoint
+
+Every fact in the game until now lands on its own answer. `Fact.strategy`
+(`facts.py:68`) returns a start and signed jumps, and `test_facts.py`'s
+`test_every_strategy_lands_on_the_answer` asserts `strategy.end == fact.result`
+for all 278 of them. Division cannot satisfy that, and the failure is quiet
+rather than loud.
+
+Walk it with real numbers. `12 ÷ 3 = 4` is `Fact(12, "÷", 3, 4)`. The picture
+that teaches it is the skip count: `0 → 3 → 6 → 9 → 12`, four equal hops — which
+is pixel-for-pixel the picture `3 × 4 = 12` already draws, and that sameness *is*
+grade 3's lesson on how multiplication and division connect. But that line ends
+on **12**, and `fact.result` is **4**. The answer is the number of hops.
+
+The three ways this goes wrong if it is not decided up front:
+
+1. Force the invariant and draw `Strategy(12, (-3, -3, -3, -3))`: the line runs
+   `12 → 9 → 6 → 3 → 0` and ends on **0**, which is not the answer either. Now
+   the test fails on a different number and the picture teaches counting down to
+   nothing.
+2. Force it the other way and hand back `Strategy(0, (4,))` — a single hop to 4.
+   The invariant passes, the test goes green, and the hint for `12 ÷ 3` is a
+   number line with a lone hop of four on it that mentions neither 12 nor 3. It
+   is wrong and nothing raises.
+3. Draw the correct skip count and leave the widget alone. Then the hint for
+   `12 ÷ 3 = ?` shows hops labelled `+3 +3 +3 +3` ending at a highlighted **12**
+   — and 12 is the number already printed in the question. The picture shows him
+   the number he was given and never shows him the number he was asked for.
+
+So the rule is stated per operation instead of universally, and the widget gains
+a caption:
+
+- `÷` draws `Strategy(0, (fact.b,) * fact.result)` — `fact.result` hops of
+  `fact.b`, ending on `fact.a`.
+- The test becomes: `+`, `−` and `×` land on `fact.result`; `÷` lands on
+  `fact.a` with `fact.result` jumps.
+- `draw_number_line` gains an optional caption, and the booth's own hint (next
+  section) will want the same parameter, so it is added once here.
+
+Both division forms of a pair share one `(a, op, b, result)` tuple and therefore
+one strategy, exactly as the two subtraction forms of a bond already do.
+`Fact(12, "÷", 4, 3)` — `12 ÷ ? = 3` — draws three hops of four and also ends on
+12. Correct in both directions with one expression.
+
+### The steps
+
+Order is forced twice: the pool has to exist before the level screen can point
+at it, and `Fact.strategy` has to know `÷` before any miss on a division fact
+can draw a hint. Step 3 is last because it is the only step that touches files
+outside the change.
+
+**Step 1 — the pools.** `domain/facts.py`.
+
+Add `_divide_pair(a, b)` beside `_times_pair` (`facts.py:158`), yielding the two
+forms that `_times_pair`'s docstring already names as deliberately absent:
+
+```python
+def _divide_pair(a: int, b: int) -> tuple[Fact, ...]:
+    total = a * b
+    return (
+        Fact(total, "÷", a, b, "result"),   # 12 ÷ 2 = ?
+        Fact(total, "÷", a, b, "b"),        # 12 ÷ ? = 6
+    )
+```
+
+Add `_divided(n)` mirroring `_times` (`facts.py:175`) but over `range(1, 11)`,
+not `range(11)` — see Traps. Add `_DIVIDE` beside `_MULTIPLY` (`facts.py:206`)
+with ids `divide_two`, `divide_five`, `divide_ten`, names *Divide by Two* /
+*Divide by Five* / *Divide by Ten*, and `seconds_per_part` 5.0 to match the
+multiply column. Extend `EVERYTHING` (`facts.py:214`) and `LEVELS`
+(`facts.py:221`) — both are derived, so both pick the new levels up from the one
+tuple.
+
+Add the `÷` branch to `Fact.strategy` (`facts.py:68`) **before** the `+`/`−`
+branches, alongside the existing `×` early return.
+
+*Gate:* `uv run pytest`. Tests that must be updated in this step, all in
+`tests/test_facts.py`: `TIMES` (line 5) gains `"÷": lambda a, b: a // b`;
+`test_pool_sizes` gains the three levels at 20 each and `everything` becomes
+**338**; `test_each_topic_asks_its_own_operations` gains the division levels
+asking `{"÷"}` and `everything` asking `{"+", "-", "×", "÷"}`;
+`test_every_strategy_lands_on_the_answer` splits per operation as above. Add
+`test_division_hops_count_the_answer` pinning
+`strategy(12, "÷", 2, 6) == Strategy(0, (2,) * 6)` — the worked example above
+uses `12 ÷ 3`, which is not in any pool, because the divisors are 2, 5 and 10 —
+and a division key to
+`test_keys_are_unique_and_stable` — `12÷2=6@b` — because that string is now a
+storage format.
+
+**Step 2 — the caption.** `shell/draw.py`, `shell/app.py`.
+
+`draw_number_line` (`draw.py:937`) takes `caption: str | None = None` and draws
+it under the prompt when set. `render_play` (`app.py:712`) composes it for `÷`
+only — `"four hops of three"` — reading `play.round.hint.fact.op`. This is
+presentation, not a rule: the shell is choosing words for a number the domain
+already returned.
+
+*Gate:* `uv run mathr`, miss a fact on *Divide by Five* on purpose, and check
+the line reads `0 3 6 9 12` with the caption under it and the whole thing inside
+`HINT_BOX`. `test_scaling.py` covers the transform, not this.
+
+**Step 3 — the column.** `shell/app.py`, `README.md`, `CLAUDE.md`, `ideas.md`.
+
+`LEVEL_COLUMNS` (`app.py:176`) gains the third tuple. `SOON_BUTTONS`
+(`app.py:191`) drops its three division entries and keeps only *Tricky Facts* —
+which moves it from a generator expression plus a tuple to a one-element tuple.
+`app.py:693` loses its `draw.DIM if title == "Division"` conditional entirely;
+every column title is now `draw.ACCENT`.
+
+Documentation this step falsifies, all of which must move in the same commit:
+
+- `README.md:125–138`, the level table — three rows, and `everything` becomes
+  338.
+- `README.md:135–138`, which states division as a deliberate absence: *"Division
+  has a dimmed column on the level screen... The multiplication levels ask only
+  `a × b = ?` and `a × ? = c`; the two forms that would complete the set are
+  division, which is exactly what is not built yet."* That passage is now false
+  in every clause and has to be rewritten, not extended.
+- `CLAUDE.md`, *The map* and *Making the two likely changes* — the pool sizes
+  line (`24 / 44 / 144 / 22 / 22 / 22`, `everything` 278) and the claim that a
+  times pair yields two questions *"— the other two would be division, which is
+  not built"*.
+- `ideas.md`, *More levels* — the **Division** entry becomes **Built**, and the
+  pattern the file already uses for built entries applies: keep what it
+  predicted next to what it cost.
+
+*Gate:* `uv run pytest`, then `uv run mathr` and confirm the Division column
+cards are lit, clickable, and carry badges.
+
+### Traps
+
+**`b = 0` must not be in the division pools.** `_times(n)` (`facts.py:175`)
+draws `b` from `range(11)`, which is right for multiplication — `2 × 0 = 0` is a
+fact worth asking. Carried into division it produces `Fact(0, "÷", 2, 0, "b")`,
+which renders as `0 ÷ ? = 0`, and **every divisor is a correct answer**. He types
+5, the game says wrong, and the number line draws zero hops of two. Nothing
+raises, and the fact sits in the deck being wrong forever. `_divided` uses
+`range(1, 11)`, which is also where the 20-facts-per-level figure comes from.
+
+**The `÷` branch must come before the `+`/`−` branches in `Fact.strategy`.** The
+current body (`facts.py:68–83`) early-returns on `×`, then on `+`, and otherwise
+falls through to subtraction. A `÷` fact reaching the fall-through is treated as
+`a − b`: `12 ÷ 3` draws `Strategy(12, (-3,))`, a single hop from 12 to 9. It is a
+valid-looking line, it lands on nothing relevant, and no test outside
+`test_every_strategy_lands_on_the_answer` would notice.
+
+**`Fact.key` is unchanged and must stay unchanged.** `12÷2=6@result` is a new
+string in an existing format. No `VERSION` bump — `storage.py:18` stays at 2 —
+because nothing about the *shape* of a key moved and every existing key still
+means what it meant. Adding new level ids is the same: `LevelRecord` is keyed
+`<mode>/<level>` and a new level id is simply a key with no record yet.
+
+**Verify `÷` renders.** Fonts come from `pygame.font.SysFont(None, ...)`
+(`app.py:277–282`). `×` (U+00D7) already renders in that font, and `÷` (U+00F7)
+is its neighbour in Latin-1, so this should be free — but a missing glyph draws
+as a blank or a box and raises nothing. Look at it once in step 2's gate.
+
+### Considered and rejected
+
+- **Growing `_times_pair` to four forms**, so *Times Two* teaches `2 × 6` and
+  `12 ÷ 2` together. This is the research's own argument — showing a triple in
+  both directions *is* the ×/÷ connection, and interleaving is the strongest
+  single effect in `research/math-education.md` §2.1. Rejected because it
+  deletes the reserved Division column rather than filling it, and changes a
+  level he already plays underneath him. The connection is still made in
+  `everything`, and both keys exist, so the measurement in
+  `research/iready-grade3.md` §4.1 — whether `2 × ? = 12` and `12 ÷ 2 = ?` have
+  converged to the same speed — is available either way.
+- **Both: full fact families *and* a division column.** The most exposure, and
+  it duplicates every division key across two columns, so `everything` needs
+  de-duplication or it double-counts and `test_everything_is_every_other_pool`
+  changes shape.
+- **Division as `a × ? = c` only, with no `÷` symbol.** Already how the game
+  asks it. Rejected because the reserved UI names the levels *Divide by 2 / 5 /
+  10* and the column title is *Division*; a column that never shows a division
+  sign is a worse lie than not having one.
+- **A partition picture for the hint** — twelve counters dealt into three rows.
+  Closer to how division is first taught, and it is a second representation in a
+  game that has exactly one. The skip count reuses the widget and makes the ×/÷
+  connection the same image.
+- **No hint on division at all.** Zero work, and it removes elaborated feedback
+  — the highest-ranked cheap intervention in `research/math-education.md` §5 —
+  from the one operation that is new to him.
+- **My own wrong turn.** Mid-dig I put `everything` at 318 facts. It is 278 + 60
+  = **338**; the 20-per-level figure was right and the addition was not. The
+  number appears in `test_pool_sizes`, `README.md:133` and `CLAUDE.md`, so a
+  stale one is pinned by a test in one place and printed as prose in two others.
+
+### Accepted with known risk
+
+- **`seconds_per_part = 5.0` for the division levels** is a guess, copied from
+  the multiply column. Division is new to him and a first division fact is
+  likely slower than a known times fact. It is the one per-level dial and
+  `CLAUDE.md` says the dials are turned after watching him. **Revisit trigger:**
+  `failures` on `rocket/divide_two` running ahead of `rocket/twos`.
+
+### Environment and coverage notes
+
+The suite does not open a window, so step 2's caption and step 3's lit column
+are checked by hand at `uv run mathr` and by nothing else. Everything in step 1
+is covered by `tests/test_facts.py`.
+
+---
+
+## Replay Booth: a sentence judged, and repaired
+
+> **Superseded before it was played.** Built as written, then replaced by *Code
+> Breaker* below. Everything here about the seam — one queue holding
+> `Question | Sentence`, lives a wrong answer spends, `losable` rather than
+> `timed` — survived the replacement and is still true. What did not survive is
+> the mechanic: judge-then-repair. Kept in full, because the reason it failed is
+> not visible from the thing that replaced it.
+
+### What changes
+
+A fourth cabinet takes the *soon* slot. He is the official in the replay booth:
+a scoring claim is shown as a number sentence — `7 + 6 = 9 + 5` — and he lets
+the call stand or overturns it. Overturning is not enough on its own; one number
+is highlighted and he types what it should have been. Three blown calls and he
+is off the crew. There is no clock at all.
+
+The lesson is the equal sign. The best-documented misconception in elementary
+arithmetic is reading `=` as *"write the answer here"* rather than *"the same
+as"* (`research/math-education.md` §3.1), and the sentences that dismantle it —
+`8 = 8`, `3 + 5 = 5 + 3`, `7 + 6 = 9 + 5`, `7 + 6 = ? + 5` — are not facts with
+a missing operand. They are the first items in this game that a `Fact` cannot
+express.
+
+### The load-bearing decision: this mode differs in its *items*, not its *rules*
+
+The arcade section of this plan argued that a mode is not a renderer — that
+Rocket, Tennis and Football are three readings of a `Rules` bundle, and a mode
+built as a pure renderer over someone else's rules compiles, draws, and plays as
+a different game. That argument is intact and it does not apply here. The booth
+could run on `ROCKET`'s rules unchanged and still be a different game, because
+what changed is what a question **is**.
+
+That makes this the third seam, and it is the one deferred twice — once in the
+arcade section, once in the football section, as *"a heterogeneous queue,
+`Question | Placement`... rejected as future-proofing: it touches `_advance`,
+`shuffled`, `_weights` and storage, and one mode wants it. Revisit when a second
+placement mode exists."* This is the other event that reopens it, and
+`research/iready-grade3.md` §5.4 says the same thing from the other side: three
+candidate modes all pay for this seam, so pick one and let it define it.
+
+The decision is that **`Round.queue` holds items, not questions**, where an item
+is anything with `.key`, `.prompt`, `.answer` and `.strategy`. Concretely
+`Question | Sentence`. Everything downstream already touches only those four
+members: `_advance` (`round.py:365`) slices the queue and never reads inside an
+item; `_weights` (`round.py:280`) and `Tally` key off `.key`; `apply`
+(`round.py:574`) compares `given == question.answer`.
+
+Walk the alternative to see why it is worse. Give the booth a *parallel* deck —
+`Round.sentences` beside `Round.queue`, the way `gains` sits beside the queue for
+placements. Now:
+
+1. A booth round has a `queue` of facts it never asks and a `sentences` tuple it
+   does. `Round.current` returns a question that is not on screen.
+2. `tick` accumulates `on_current` against `queue[0]`, so every second he spends
+   judging a sentence is charged to a fact he never saw.
+3. `merge` folds that into `Tally.seconds` for that fact, which is the deck
+   weighting's only input, which floats a fact he has never been asked to the
+   front of every future deck.
+4. The symptom is "he keeps getting the same questions in the *rocket*", and
+   nothing in the booth is anywhere near the stack trace, because there is no
+   stack trace.
+
+The parallel deck is cheaper to write and it corrupts the one data set in this
+game that cannot be reconstructed. One queue, mixed items.
+
+### What a sentence is
+
+```python
+@dataclass(frozen=True)
+class Side:
+    """One side of a sentence: a bare number, or a binary expression."""
+    a: int
+    op: str | None = None
+    b: int | None = None
+```
+
+```python
+@dataclass(frozen=True)
+class Sentence:
+    """A number sentence with `=` between two sides, judged and then repaired.
+
+    `Fact` is the degenerate case — one expression, one bare number — but it
+    stays its own type, because `Fact.key` is a storage format and this is not.
+    """
+    left: Side
+    right: Side
+    mark: str      # "left" | "right": which side's `b` is highlighted for repair
+    fixed: int     # what that number must be for the sentence to be true
+```
+
+- `.true` is derived: `left.value == right.value`. Never stored — a stored truth
+  value can disagree with the numbers beside it, and the numbers are what he
+  reads.
+- `.answer` is `fixed`, so `apply` compares against it with no new branch.
+- `.key` is its own string in its own shape — `"7+6=9+5@right"` — sitting beside
+  untouched `Fact.key`s in the same `facts` map.
+- `.strategy` is not enough: the hint needs both sides. `Sentence` carries
+  `.strategies -> tuple[Strategy, Strategy]`, and the shell picks the hint
+  renderer per mode, not by an `isinstance` check.
+
+Sentences are generated from a level's own fact pool, so the shared level grid
+needs no layout decision and every cabinet still leads to the same twelve cards.
+Two facts from the pool with the same result give a true both-sides sentence
+(`tens` is every pair making ten, so `3 + 7 = 4 + 6` falls straight out); one
+side shifted by one or two gives a false one. `bridge` yields the hard ones.
+
+### The load-bearing decision, second half: judge and repair are one play
+
+A bare true/false item is a coin flip. That is the exact failure the football
+attempt counter exists to stop — *"the line can be clicked at idly until
+something sticks, which is the one way to play this mode without estimating"* —
+and it arrives here at 50%, not at a tolerance.
+
+So a "call overturned" has to be backed: one number is highlighted and he types
+what it should be. Two skills in one play, and neither is tradeable for the
+other. This is the throw-and-catch bargain the football section already argued
+and it reuses that machinery rather than inventing a second copy:
+
+| Football | Booth |
+|---|---|
+| `place(round, value)` → `PLACED` / `ADRIFT` | `judge(round, said_true)` → `CALLED` / `BLOWN` |
+| `Round.pending` — a claim awaiting confirmation | `Round.repairing` — a sentence awaiting its number |
+| `Round.placing` — derived, "is one due" | `Round.judging` — derived, "is one due" |
+| `apply` confirms it → `SECURED` | `apply` repairs it → `FIXED` |
+
+`repairing` is stored because `pending` is stored; `judging` is derived because
+`placing` is derived, and for the identical reason given in that section — a
+stored one has to be written on every path that could clear it, and one missed
+path is an item that never appears or one that appears twice, with nothing
+raising.
+
+### The load-bearing decision, third half: lives without a clock
+
+`rules.lives` today means **empty-clock events survived**. `points` is
+incremented in exactly one place — `tick` (`round.py:376`), on the frame the
+bank empties — and `apply` can never set `failed` at all. So a mode with lives
+and no clock, written naively, has three lives that nothing can ever spend and
+no way to lose.
+
+`new_round` guards this (`round.py:310–312`):
+
+```python
+if not timed and rules.lives is not None:
+    # A rally has nowhere to put the ball without a deadline to fly along.
+    raise ValueError("a round with lives cannot be untimed")
+```
+
+That reason is true and it is about tennis. The guard's real content is *lives
+with no way to spend one*, which is what makes it right for tennis and wrong
+here. So `Rules` gains one dial — `wrong_costs_life: bool` — and the guard is
+restated as what it actually means:
+
+```python
+if not timed and rules.lives is not None and not rules.wrong_costs_life:
+    raise ValueError("a round with lives needs something that can spend one")
+```
+
+`points` keeps its counter and gains a second thing that increments it. `apply`
+gains the power to set `failed`, which `place` (`round.py:485`) already has, so
+this is a precedent and not a new capability in the reducer layer.
+
+Why no clock at all: the measurement that separates *saw it* from *computed it*
+is response time against his own arithmetic baseline
+(`research/iready-grade3.md` §4.3), and a threat clock suppresses the thing being
+measured — `research/math-education.md` §4 caution 2 is explicit that time
+pressure and this kind of practice fight. `tick` still accumulates `on_current`
+in an untimed round, by design and by its own docstring, so the times are still
+recorded. And in a replay booth, unhurried is the job: every other cabinet's
+clock is diegetic — fuel burning, a ball falling, a play clock — and here the
+*absence* of one is too.
+
+### The steps
+
+The order is forced end to end: the item type has to exist before a queue can
+hold one, the queue before a reducer can judge one, the reducer before the shell
+can draw one, and the recording predicate before the first win is folded into a
+file. Steps 1–3 are pure domain and each is landable with tests and no window.
+
+**Step 1 — `Sentence`, and generation.** `domain/facts.py`, new
+`tests/test_sentences.py`.
+
+`Side`, `Sentence`, and `sentences(level, rng)` deriving a pool from
+`level.facts`. Shape mix per the dig: `8 = 8` and `3 + 5 = 5 + 3` as the easy
+openers, `7 + 6 = 9 + 5` as the body, `7 + 6 = ? + 5` — a sentence whose marked
+number is blank from the start and needs no judgement — as the hardest.
+
+*Gate:* `uv run pytest`. Pin that a true sentence's sides are equal and a false
+one's differ by one or two; that `.answer` makes it true when substituted; that
+keys are unique within a pool and stable across runs; and that generation is
+deterministic per seed.
+
+**Step 2 — the queue holds items.** `domain/round.py`, `domain/facts.py`.
+
+Widen the `queue` and `deck` types. `shuffled` gains a sentence path — a
+separate branch, not a generalisation of the existing one, for the same reason
+the weighted path is separate: *"the unweighted one interleaves the orientation
+flip with the sample and every seeded test pins the result."*
+
+*Gate:* `uv run pytest` with **no test changes**. This step is a no-op for the
+three existing modes, and `test_select.py`'s determinism pins are what prove it.
+If a seeded shuffle moved, the widening touched the flat path and must be redone.
+
+**Step 3 — `judge`, and lives that a wrong answer spends.** `domain/round.py`,
+`tests/test_judge.py`.
+
+`Rules.wrong_costs_life`, the restated `new_round` guard, `Round.repairing`,
+`Round.judging`, the `judge` reducer, `apply` gaining the repair branch and the
+power to set `failed`, and a `BOOTH` rule set. New outcomes: `CALLED`, `BLOWN`,
+`FIXED`. Add `Round.losable` — `timed or rules.wrong_costs_life` — for step 5.
+
+Two behaviours that follow from the existing sections and are not open
+decisions: a wrong judgement **advances** the queue and re-queues at `RETRY_GAP`
+(tennis leaves a wrong answer's question up because he can retype it; there is
+nothing to retype when the answer was one of two buttons, so leaving it up shows
+him the answer), and a wrong **repair** costs nothing — no life, no queue move,
+the hint up and the sentence held — exactly as *"a wrong answer under a pending
+placement plays by the rally's rules, not the mode's."*
+
+*Gate:* `uv run pytest`. Pin that three blown calls set `failed` and return
+`LOST`; that a wrong repair changes neither `points` nor the queue; that
+`judging` is None while `hint` is set, and that the hint therefore wins over a
+due call the way it wins over a due placement; that `new_round` still raises for
+untimed tennis and no longer raises for the booth.
+
+**Step 4 — the booth.** `shell/app.py`, `shell/draw.py`, `shell/audio.py`.
+
+A `Mode` entry, a `Layout`, a renderer in the `render_play` dispatch
+(`app.py:712`), the fourth `CABINETS` rect (`app.py:156`), two judgement buttons
+as a module constant beside `KEYPAD` (`app.py:201`) — `Layout` does not need a
+new field, because `KEYPAD` is already a module constant and not one — and a
+whistle clip in `audio.py`, where nothing whistle-like exists today; `wrong` and
+`cheer` are reusable.
+
+The two-line hint: `draw_number_line` grew a `caption` parameter in the division
+work, and this needs the sibling — both sides' routes over one shared span, so
+`7 + 6` lands on 13 and `9 + 5` lands on 14 and the gap is a visible distance.
+The renderer is chosen per mode through the same dict dispatch as `render_play`,
+never by an `isinstance` on the item.
+
+`start()` (`app.py:428`) computes `timed = True if mode.rules.lives is not None
+else self.progress.settings.timer`. The booth has lives and must be untimed, so
+this line needs the booth's case; the Timer toggle is inert here and that is
+correct.
+
+*Gate:* `uv run mathr`. Play a booth round at two window sizes including a tall
+narrow tile; confirm the judgement buttons hit where they are drawn, that the
+call does not reveal itself before he answers, and that a blown call shows both
+routes inside the hint rect.
+
+**Step 5 — a win counts as a launch.** `storage.py`, `tests/test_storage.py`.
+
+`_fold` (`storage.py:140`) opens `if not round.timed: return replace(record,
+practice=...)`. The booth is untimed and losable, so under that predicate a
+perfect game records as practice and the level card reads zero launches forever,
+next to three cabinets that launch. The predicate becomes `round.losable`.
+
+This overturns a documented invariant rather than extending one. `CLAUDE.md`
+says *"Untimed launches must not touch `launches`. They go to `practice`, or the
+number that means 'I beat it' is farmable from the menu toggle."* The reason is
+right and the test was a proxy: what makes a win farmable is having no way to
+lose, not having no clock. Rocket with the timer off is still untimed, still has
+no lives, still records to `practice`. Nothing about the anti-farming property
+changes.
+
+*Gate:* `uv run pytest`. Pin that a rocket round with the timer off still folds
+to `practice`, that a booth win folds to `launches`, and that
+`test_a_file_from_before_the_clock_still_loads` is untouched — no `VERSION` bump,
+because sentence keys are new strings in the `facts` map and a booth `LevelRecord`
+is a new `<mode>/<level>` key.
+
+**Step 6 — documentation.** `README.md`, `CLAUDE.md`, `ideas.md`, and the
+football section of this file.
+
+- `README.md` gains a *Replay Booth* section beside the other three, and its
+  opening line — *"Three games, one question pool"* — becomes four.
+- `CLAUDE.md`: *The map* gains `judge`/`Sentence`; *Making the two likely
+  changes* says the grid is now full at four and a fifth cabinet is a layout
+  decision; the invariant on untimed launches is restated per step 5; the
+  `Rules` dial table gains `wrong_costs_life`.
+- `ideas.md`, *A second game mode* — the remaining-candidates paragraph names a
+  growing city, a rescue climb and a race, none of which this is.
+- **This file, the football section's *Out of scope, and where it went***, which
+  reads *"Recorded in `ideas.md`, not built here: true/false number sentences
+  (research §3.1, ranked second — the relational `=`, and the cheapest of the
+  remaining ideas)"*. That is now built and the entry has to say so.
+
+### Traps
+
+**A stored truth value.** `Sentence.true` is derived from its own sides. Stored,
+it can disagree with the numbers printed next to it, and the failure is a
+sentence that is visibly true and marked wrong — which reads to a seven-year-old
+as the game being broken, and to a reader as a generation bug rather than a
+storage one.
+
+**The booth must not reveal the call before he answers.** Whatever the art does
+— a monitor, a verdict light, a crowd — it must be identical for a true and a
+false sentence until he has committed. This is the yard-stripe trap in another
+costume: *"they are what a real field looks like, and they are also a benchmark
+to count along instead of a distance to judge."* An indicator that leans before
+the judgement removes the entire skill and nothing raises, because the mode still
+scores correctly.
+
+**The queue must stay one queue.** Walked through above. The symptom of a
+parallel deck is corrupted `Tally.seconds` on facts he was never asked, which
+surfaces as bad deck ordering in a *different cabinet*.
+
+**A keystroke must not judge.** `press` (`app.py:452`) already returns early
+while `placing` is set, because *"the click is the estimate"*. The same gate is
+needed for `judging`: the two buttons are the call, and a digit key that resolved
+a call would record a judgement he never made. But note the asymmetry — during
+the **repair** the keyboard is the input, and the hint-dismissal rule applies
+there exactly as it does everywhere else.
+
+**A wrong judgement must advance; a wrong repair must not.** Getting these the
+same way round is the bug. Advance on a wrong repair and the next call is
+confirmed by a sentence he was halfway through fixing. Hold on a wrong judgement
+and the answer is on screen — there were only two.
+
+**`new_round`'s guard must be restated, not deleted.** Deleting it lets an
+untimed tennis round exist: three lives, no clock, nothing that can ever spend
+one, and a match that cannot be lost or won. The guard's replacement has to keep
+raising for that case.
+
+**Two of four cabinets would be football-flavoured.** The booth is sport-agnostic
+by nature — it reviews *calls*, and the monitor never has to show a field. Keep
+it visually indoors, or the arcade reads as football twice.
+
+### Considered and rejected
+
+- **A balance beam, a tug of war, a tightrope.** The canonical representations
+  for relational `=`, and the beam is what the literature reaches for. Rejected
+  by the user in favour of a sports theme; the booth keeps the property that
+  mattered — it shows which side is heavy once he has committed, and not before.
+- **Long jump** — two jumps measured against one tape, so the mode and the hint
+  are drawn in the same representation. The strongest runner-up, and it carries
+  the reveal trap in a sharper form: the jumpers have to still be in the air
+  while he judges.
+- **Rowing** (an unbalanced boat veers) and **tied at the buzzer** (a scoreboard
+  is genuinely two sums). Rowing shows *which* side is heavy but not *by how
+  much*; the scoreboard is the most honest reading of `=` in any sport and the
+  most static picture of the four.
+- **True/false over facts only** — `8 + 5 = 14`, true or false. Derived wholly
+  from the existing pools, no new type, `Fact.key` reused, the hint unchanged.
+  Nearly free, and it teaches *check the arithmetic* rather than what `=` means.
+- **Open sentences only** — `7 + 6 = ? + 5` on the existing keypad. No new input
+  at all, and it needs the same new type anyway, so it pays the seam cost for
+  less of the lesson.
+- **Judge only, with no repair.** A coin flip scores 50%.
+- **A parallel sentence deck beside the queue.** Walked through above.
+- **A generous bank instead of no clock** — `ROCKET`'s rules with the level's
+  `seconds_per_part` raised. It needs no new dial and it was my recommendation
+  during the dig. Overturned by the user in favour of lives-and-no-clock, and
+  the better argument is the user's: a bank that is generous enough not to rush
+  a thinker is a clock that does nothing, and it would still have made the
+  mode's threat identical to the rocket's.
+- **False sentences off by a lot.** A wildly wrong side is spotted without
+  reasoning. Off by one or two is the item that separates seeing from computing.
+- **Growing `Layout` for the judgement buttons.** `KEYPAD` is a module constant
+  and not a `Layout` field; the buttons follow the precedent.
+
+### Accepted with known risk
+
+- **The times levels are thin for this mode.** A both-sides sentence needs two
+  facts from the same pool with the same result, and `_times(n)` holds one fact
+  per product. *Times Two* can barely make one. Division shipping first thickens
+  the multiply half of the grid, which is a second reason for that order, but it
+  does not fully fix it. **Revisit trigger:** if the booth is unplayable on the
+  multiply and division columns, restrict its level list rather than weakening
+  the sentence generator.
+- **The 2×2 grid is now full.** The arcade section accepted this when it chose
+  the grid over three cabinets across, and this spends the last slot. A fifth
+  cabinet is a layout decision, and `ideas.md` still holds guess-my-rule and
+  CGI word problems, both of which want one. The user's position, recorded
+  during the dig: the grid can grow if needed.
+- **`Sentence.key` is a new storage format** and gets the same protection
+  `Fact.key` has — changing its shape later orphans everything recorded under
+  it. It is not covered by `VERSION`, which describes the `levels` key.
+
+### Environment and coverage notes
+
+Steps 1, 2, 3 and 5 are covered by the suite and open no window. Step 4 is
+covered by nothing: the three things `CLAUDE.md` names as unreachable by testing
+— windowing under Hyprland, audible sound, and whether the pacing is right for
+him — all apply, and the reveal trap above is a fourth. Look at it at
+`uv run mathr`.
+
+**Reading this plan is based on.** Fully read: `domain/facts.py`,
+`domain/round.py`, `storage.py`, `tests/test_facts.py`, both files in
+`research/`, `ideas.md`, `CLAUDE.md`. Read in part: `shell/app.py` — the
+constants, `Mode`, `MODES`, `Play`, the event handlers, `submit`, `throw`,
+`update`, `render_play` — but **not** the individual renderers below
+`app.py:756` (`render_rocket`, `render_court`, `render_field`, `render_miss`,
+`render_entry`, `render_win`, `render_failure`); `shell/draw.py` — `Layout`,
+`draw_number_line`, and the constants around them, but not the art or the
+cabinet geometry; `shell/audio.py` — only the clip names at lines 209–220, not
+the synthesis. Not read at all: `tests/test_round.py`, `test_clock.py`,
+`test_place.py`, `test_storage.py`, `test_scaling.py`, `test_select.py`. Step 2
+in particular claims "no test changes" against `test_select.py`, which has not
+been read — verify that claim before relying on it.
+
+### Out of scope, and where it went
+
+Recorded in `ideas.md`, not built here: guess-my-rule / the function machine
+(`research/math-education.md` §3.4), CGI-structured word problems (§3.3), and
+fractions on a number line (`research/iready-grade3.md` §5.1) — the highest-value
+item on the grade-3 list, deferred because it is a different *span* rather than
+different *rules* and therefore wants a level, not the last cabinet. Rounding as
+a second question over the placement mechanic (§5.3) and the scaled pictograph
+scoreboard (§5.5) are the two cheapest remaining and belong beside it. The
+parent-facing view that would read `placements` and the per-fact tallies back is
+the same deferral it has been in every section of this file.
+
+---
+## Code Breaker: the answers are the combination
+
+### What changes
+
+The fourth cabinet stops being a sentence judged one at a time and becomes a
+panel of them. Each intercepted line has one number missing — `7 + 6 = ? + 5` —
+and every number he works out drops into a combination that opens a lock. A
+round is three locks of four, five and six lines. A wrong answer trips one of
+three alarms; the line stays put, the number line comes up showing both sides,
+and he tries again. Three alarms and the vault locks down.
+
+### The load-bearing decision: the maths has to *be* the reward
+
+Replay Booth was built to this file's own spec, passed 200 tests, and was not a
+game. The failure is worth stating precisely, because it is not a failure of the
+lesson and re-deriving it from the working code is impossible.
+
+Walk what was on screen. A green rectangle with `7 + 3 = 3 + 9` in it, two
+buttons, and a pip in the shared header. Now compare each cabinet by what
+*moves*:
+
+1. Rocket: a part bolts on, visibly, every correct answer. Ten of them build an
+   object.
+2. Tennis: a ball falls at him and he hits it back.
+3. Football: a marker walks up a field he can see.
+4. Booth: nothing. The only state on screen was `0 / 10 calls`.
+
+And the feedback ran backwards. A *wrong* call raised the two-route number line
+— the richest picture in the game. A *right* call played a whistle and advanced.
+The punishment was more interesting than the reward, which for a seven-year-old
+is the whole problem.
+
+The third thing was structural. Removing the clock was correct — the mode
+measures reasoning faster than his own arithmetic, and a clock suppresses what
+it is measuring — but the clock was the only thing carrying tension in the other
+three cabinets, and nothing replaced it. Ten identical calls in a row; call nine
+felt like call one.
+
+So the fix is not art on top of the booth. It is: **make the answers accumulate
+into something**, which is what a combination does. The number he works out is
+not scored, it is *kept*, in a cell he can see, next to the cells still empty.
+That single change gives the mode an object that grows, a reward for being right
+that is bigger than the reward for being wrong, and — with locks of four, five
+and six — an escalation that the flat run of ten never had.
+
+The cost is stated plainly: **the true/false half of the lesson goes.** `8 = 8`
+and `3 + 5 = 5 + 3` cannot be asked as a blank, and those are the two Carpenter
+items that confront `=` most directly. What survives is `7 + 6 = ? + 5`, which
+is the canonical open number sentence and the gateway item in the same research.
+That trade was put to the user with the loss named, and taken.
+
+### What was deleted, and why it is not dead code kept "just in case"
+
+`judge`, `Round.repairing`, `Round.judging`, `Round.asking`, `Sentence.true`,
+`Sentence.hidden`, `Sentence.blanked`, `Sentence.repaired`, the false-sentence
+generator with its shift-and-check, and the outcomes `UPHELD` / `CALLED` /
+`BLOWN` / `FIXED`. With every line open, nothing can fire any of it. Kept, it
+would be a second reducer a cold reader has to understand before finding out
+that no mode calls it. The history is in git and the reasoning is in the section
+above this one.
+
+`Rules.judges` and `Rules.locks` collapsed into one dial for the same reason: a
+mode with locks has sentences in them, and there is no useful mode with either
+and not the other.
+
+### The steps
+
+Order forced: the item shape before the deck, the deck before the reducer, the
+reducer before anything can be drawn, and the panel before it can be looked at.
+
+1. **`Sentence` loses its judged half.** `domain/facts.py`. Sides hold true
+   numbers, `prompt` hides the marked one, `filled` shows it. Generation drops
+   the shift-and-check entirely — nothing false is ever built, so `_sane` has
+   nothing to guard.
+2. **A shape for thin pools.** `_decomposed` — `12 ÷ 2 = ? + 4`. Without it a
+   division level generated **ten lines, every one of them bare** `12 ÷ 2 = ?`,
+   because division cannot commute and no two of its expressions share a value.
+   That is the whole cabinet reduced to plain arithmetic on repeat, and it is
+   only visible by generating a deck and looking at it. Both parts at least one:
+   `18 ÷ 2 = 0 + ?` is the bare fact with a nought on the front.
+3. **Locks and alarms.** `domain/round.py`. `Rules.locks`, `Round.cracked`,
+   `Round.lock`, `Outcome.CRACKED`, the alarm branch in `apply`, and the guard
+   that the locks add up to the target.
+4. **The panel.** `shell/draw.py`, `shell/app.py`, `shell/audio.py`.
+5. **Documentation.** `README.md`, `CLAUDE.md`, `ideas.md`, and the banner on
+   the section above.
+
+### Traps
+
+**`apply` can now end a round, so `submit` must handle `LOST`.** Every other
+mode loses in `tick` or in `throw`. Without the branch the domain is over while
+the shell sits there with a dead keypad and no failure screen, and nothing
+raises. Found by driving a round headless, not by the suite.
+
+**Do not name a rect after a colour.** `PANEL` is a palette entry in `draw.py`;
+a module-level `PANEL = pygame.Rect(...)` silently replaced it and every cabinet
+on the menu screen died with `invalid color`. It is `CODE_PANEL`.
+
+**The hint box has to be tall enough for two routes.** `draw_two_routes` needs
+roughly 470px; given the 230px box it was first handed, the arcs drew through
+the prompt and the entry box sat on top of the verdict. Its baselines are now
+proportional to the rect, and Code Breaker's hint covers the panel — which is
+dead while a hint is up, exactly as the rocket's hint covers the rocket.
+
+**Lines below the active one must stay encrypted.** Drawing the real sentences
+lets him read ahead and work the easy ones first, and the lock stops being a
+sequence. Same trap as the yard stripes.
+
+**`cracked` clears on each swung vault**, or three locks of lines run off the
+bottom of the panel.
+
+### Considered and rejected
+
+- **Adding a reveal animation to the booth** — the two sides weighing after he
+  commits. It fixes the backwards feedback and nothing else: still no object
+  that accumulates, still no escalation. It was my recommendation and the user
+  overrode it with the code-breaking direction, which is the better call:
+  a spectacle that happens *and then is gone* is not progress.
+- **A game to officiate on the monitor** — a scoreboard advancing as he calls.
+  Most art, and it reads as a fourth sport beside the football cabinet.
+- **Promotion through a crew** — sideline to head referee. A label changing, not
+  a thing moving, which is the problem being fixed.
+- **Free choice of which line to attack.** More like a real puzzle and genuine
+  agency. Costs a reducer change — `apply` would need to know which line the
+  answer is for — and click-to-select state in the shell. Worth revisiting if
+  the fixed order reads as a list rather than a panel.
+- **Open lines plus one forgery per lock** — keeps true/false as a decoy line to
+  flag. It is the way back to the lost half of the lesson, and it costs two
+  input modes on one panel. The likeliest next change to this cabinet.
+- **Single-digit answers only**, so each cell is one digit. Would cripple
+  generation on the times and division levels, where values run to a hundred.
+  Cells are sized for two digits instead.
+- **Keeping `judge` for a later forgery mode.** Future-proofing a reducer no
+  mode calls.
+
+### Accepted with known risk
+
+- **The true/false items are gone**, and with them the two Carpenter shapes that
+  most directly attack "`=` means write the answer here". `7 + 6 = ? + 5`
+  carries the lesson alone. **Revisit trigger:** if he fills blanks fluently but
+  still reads `=` as an instruction — which shows up as him answering
+  `7 + 6 = ? + 5` with 13 — the forgery line above is the fix.
+- **Three locks of 4/5/6 is fifteen lines**, half again the ten the booth asked
+  for, with no clock to bound it. **Revisit trigger:** if a round runs past three
+  minutes or he stops before the third lock, shorten `LOCKS` — it is one tuple.
+- **Bare lines (`7 + 6 = ?`) are the fallback shape** and are the question the
+  other three cabinets already ask. Weighted 1 against 5/3/3 and pinned under a
+  third of any deck by test. **Revisit trigger:** if the division levels feel
+  like arithmetic, the split shape's weight is the dial.
+
+### Environment and coverage notes
+
+The suite covers items, decks, locks and alarms. It does not open a window. The
+panel, the encrypted rows, the combination filling, the bolt animation and the
+three new clips are checked by a human at `uv run mathr` — plus, this time, by
+driving the app headless under `SDL_VIDEODRIVER=dummy` and saving frames, which
+is what caught the `PANEL` collision, the broken hint box and the missing `LOST`
+branch. That technique is worth reaching for before asking the user to look.
+
+### Out of scope, and where it went
+
+Unchanged from the section above: guess-my-rule, CGI word problems, and
+fractions on a number line stay in `ideas.md`. The forgery line is recorded here
+rather than there, because it belongs to this cabinet rather than beside it.
+
+
+## Code Breaker: the panel becomes a safe
+
+### What changes
+
+Shell only. No `Rules`, no reducer, no storage: the mode plays exactly as the
+section above describes. The left column stops being a sci-fi readout and
+becomes one safe door — hinges down the left, three bolts down the right, the
+alarm lamps in the top rail, the lines behind glass, the combination and a dial
+on the face below them. A correct answer turns the dial a notch. A filled
+combination spins it, throws the bolts, and holds the finished lock in green.
+Winning swings the door off its hinges: inside is gold on two shelves.
+
+### The two things that were already wrong
+
+Both found by driving a round headless and looking at the frames, neither
+visible in the suite and neither raising anything.
+
+**The crack was showing him the code being erased.** `apply` clears `cracked` on
+the line that opens a lock, and `Round.lock` is derived from `parts`, so on that
+same frame `render_code` redrew the panel as the *next* lock — encrypted rows,
+empty cells — and animated a bar over the top of it. The one moving reward in
+the mode was the safe resetting. The fix is `Play.opened`: the shell keeps the
+lock it has just finished for as long as it is shown, which is presentation and
+belongs on `Play` beside `throw` and `review`, not in the domain.
+
+**`UNLOCK_HOLD` was not a hold.** `submit` sets `flash_left = FLASH_TIME` (0.45)
+for every outcome, and `App.opening` divides by `UNLOCK_HOLD` (1.1). The bolts
+therefore started 59% drawn back and finished in 0.45s, and the constant in the
+tuning table described nothing. A `CRACKED` branch in `submit` gives it the 1.1s
+it has always claimed.
+
+### The load-bearing decision: the safe wraps the maths, it does not sit beside it
+
+The obvious build is a vault door drawn *next to* the panel. The screen says no
+before taste does: the only free space is the strip beside the keypad, about
+580x120, and a door there is a decoration next to the game rather than the thing
+he is playing. More importantly it repeats the failure the section above exists
+to fix — the reward would be art that happens near the maths instead of the
+maths itself. Wrapping the combination cells in the door makes the numbers he
+worked out *be* the safe's face. The dial turning on each answer is the same
+argument at one-notch scale: the motion says what he just did.
+
+The door is rectangular, because it has to wrap a 548-wide panel. `draw_vault`,
+the round one, stays exactly as it was for the cabinet screen, where a turning
+dial reads at 200px and a rectangular box does not.
+
+### The steps
+
+1. **The rects.** `CODE_DOOR`, `CODE_PANEL` and `LOCK_ROW` re-laid inside it,
+   `CODE_HINT` split out from `CODE_PANEL`, `CODE_CHAMBER` behind it.
+2. **The door.** `draw_door`, `draw_bolts`, `draw_dial`, `_hinges`; `draw_panel`
+   loses the lock label to the rail and `draw_alarms` disappears into it.
+3. **The hold.** `Play.opened`, the `CRACKED` branch in `submit`, and
+   `App.opening` returning `None`.
+4. **The hoard.** `draw_treasure` and the `"code"` branch in `render_win`.
+5. **Documentation.** `README.md`, `CLAUDE.md`, and this section.
+
+### Traps
+
+**`App.opening` returns `None`, not `0.0`, when nothing is swinging.** A swing
+starts at zero, so a renderer gating on `opening > 0` spends the first frame of
+the reward drawing the next lock, empty — which is the bug being fixed, surviving
+in a single frame where it is just fast enough to read as a flicker.
+
+**Everything on the door goes with the door.** The rail labels, the alarm lamps,
+the combination and the dial are drawn by `render_code`, which runs before
+`render_win` on the winning frame. `draw_treasure` repaints `CODE_DOOR`'s face
+before drawing the chamber, or "LOCK 3 OF 3" floats over the open safe.
+
+**The bolts are drawn after the glass.** They retract *inward*, and the panel is
+inward of them; drawn with the frame they disappear behind it at exactly the
+moment they are meant to be watched.
+
+**`CODE_HINT` is not `CODE_PANEL` any more.** `draw_two_routes` needs about
+470px of height, and the panel is now sized for six lines inside a door. Tying
+the hint to the panel means retuning `_LINE_HEIGHT` silently squeezes the number
+line.
+
+### Considered and rejected
+
+- **A round door.** It cannot wrap a rectangle of lines, and shrinking the lines
+  to fit a circle costs legibility on `12 ÷ 2 = ? + 4`, which is the shape that
+  needs it most.
+- **Growing the safe to fill the screen before it swings.** A bigger moment, but
+  the safe leaving the spot it stood on all round breaks the continuity that
+  makes the swing land on the work he did.
+- **Coins spilling out of the door**, using the rocket's `FallingPart`
+  machinery. Most motion, and a physics pass this mode has no other use for.
+- **A hoard that grows across wins.** New stored state beside `launches` and a
+  place to show it — a different feature wearing the safe's clothes. Worth doing
+  deliberately or not at all.
+- **New clips for the bolt throw and the door.** The crack still plays `unlock`,
+  the notch `tumbler`, the win `cheer`. Additions to `audio.py`, independent of
+  any of this, and easier to judge once the pictures are being watched.
+
+### Accepted with known risk
+
+- **The leaf is blank steel while it swings.** Carrying the rail, the
+  combination and the dial on a horizontally compressed leaf is a surface and a
+  transform for about a second of screen time. **Revisit trigger:** if the swing
+  reads as a slab sliding rather than a door opening.
+- **The chamber is large and the hoard sits on two shelves near the bottom.**
+  There is empty dark above it, behind the banner. **Revisit trigger:** if it
+  reads as an empty safe with something at the bottom rather than a full one.
+
+---
+
 
 ## Traps
 

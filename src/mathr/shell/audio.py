@@ -170,6 +170,49 @@ def _tackle():
     return _Shape(seconds, wave)
 
 
+def _tumbler():
+    """One pin of the lock dropping: a dry click with a little metal on it.
+    Fires on every solved line, so it has to stay short."""
+    seconds = 0.08
+
+    def wave(t):
+        click = math.sin(2 * math.pi * 900 * t) * math.exp(-t * 70)
+        metal = math.sin(2 * math.pi * 2600 * t) * math.exp(-t * 120)
+        return (0.8 * click + 0.5 * metal) * _envelope(t, seconds, attack=0.001)
+
+    return _Shape(seconds, wave)
+
+
+def _unlock():
+    """A vault swinging: the bolt drawing back, then a rising third. The only
+    reward that arrives three times a round, so it can afford to be the big one."""
+    seconds = 0.75
+
+    def wave(t):
+        share = t / seconds
+        if share < 0.35:
+            # The bolt: low and mechanical.
+            return math.sin(2 * math.pi * 120 * t) * 0.9 * _envelope(t, seconds, attack=0.004)
+        pitch = 523 if share < 0.62 else 784
+        return math.sin(2 * math.pi * pitch * t) * _envelope(t, seconds, attack=0.01)
+
+    return _Shape(seconds, wave)
+
+
+def _alarm():
+    """Tripped: two falling squawks. Deliberately unpleasant and deliberately
+    brief — it fires at most three times in a round."""
+    seconds = 0.42
+
+    def wave(t):
+        share = t / seconds
+        pitch = 660 if share % 0.5 < 0.25 else 440
+        square = 1.0 if math.sin(2 * math.pi * pitch * t) >= 0 else -1.0
+        return square * _envelope(t, seconds, attack=0.006)
+
+    return _Shape(seconds, wave)
+
+
 def _throw():
     """The ball leaving his hand: a short rising whoosh, so a good placement is
     audibly *not* the catch it might still become."""
@@ -218,6 +261,9 @@ class Sounds:
                 "incomplete": _tone(_incomplete(), amplitude=0.25),
                 "throw": _tone(_throw(), amplitude=0.3),
                 "tackle": _tone(_tackle(), amplitude=0.4),
+                "tumbler": _tone(_tumbler(), amplitude=0.4),
+                "unlock": _tone(_unlock(), amplitude=0.42),
+                "alarm": _tone(_alarm(), amplitude=0.22),
             }
         except pygame.error:
             self._clips = {}
