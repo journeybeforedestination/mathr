@@ -15,6 +15,9 @@ from mathr.domain.facts import (
     targets,
 )
 
+#: Nine cards, one per number, each holding both operations of its table.
+TABLES = tuple(f"table_{n}" for n in range(2, 11))
+
 TIMES = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
@@ -61,13 +64,10 @@ def test_pool_sizes():
     assert {level.id: len(level.facts) for level in LEVELS} == {
         "small": 372,
         "big": 440,
-        "twos": 22,
-        "fives_times": 22,
-        "tens_times": 22,
-        "divide_two": 20,
-        "divide_five": 20,
-        "divide_ten": 20,
-        "everything": 938,
+        # Forty-two a table: twenty-two times facts, and twenty divisions —
+        # the zero pair is not askable as one. See `_divided`.
+        **{f"table_{n}": 42 for n in range(2, 11)},
+        "everything": 1190,
     }
 
 
@@ -86,10 +86,8 @@ def test_both_blank_forms_in_every_pool():
 def test_each_topic_asks_its_own_operations():
     for level_id in ("small", "big"):
         assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"+", "-"}
-    for level_id in ("twos", "fives_times", "tens_times"):
-        assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"×"}
-    for level_id in ("divide_two", "divide_five", "divide_ten"):
-        assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"÷"}
+    for level_id in TABLES:
+        assert {fact.op for fact in LEVELS_BY_ID[level_id].facts} == {"×", "÷"}
     assert {fact.op for fact in LEVELS_BY_ID["everything"].facts} == {"+", "-", "×", "÷"}
 
 
@@ -106,8 +104,11 @@ def test_keys_are_unique_and_stable():
         f for f in LEVELS_BY_ID["small"].facts if (f.a, f.op, f.b, f.blank) == (0, "+", 5, "b")
     )
     assert fact.key == "0+5=5@b"
-    assert LEVELS_BY_ID["twos"].facts[6].key == "2×3=6@result"
-    assert LEVELS_BY_ID["divide_two"].facts[1].key == "2÷2=1@b"
+    times = LEVELS_BY_ID["table_2"].facts
+    assert next(f for f in times if (f.a, f.op, f.b, f.blank) == (2, "×", 3, "result")).key == (
+        "2×3=6@result"
+    )
+    assert next(f for f in times if (f.a, f.op, f.b, f.blank) == (2, "÷", 2, "b")).key == "2÷2=1@b"
 
 
 def test_the_addition_levels_split_on_the_numbers_as_written():
@@ -136,11 +137,17 @@ def test_no_addition_by_nought_and_nought():
     assert "0+5=5@result" in {fact.key for fact in LEVELS_BY_ID["small"].facts}
 
 
-def test_times_tables_run_to_ten():
-    for level_id, n in (("twos", 2), ("fives_times", 5), ("tens_times", 10)):
+def test_a_table_runs_to_ten_in_both_operations():
+    """One card is one number read two ways: `3 × 4 = 12` and `12 ÷ 3 = 4` are
+    the same triple, which is what asking them off the same card says."""
+    for n, level_id in enumerate(TABLES, start=2):
         facts = LEVELS_BY_ID[level_id].facts
-        assert {fact.a for fact in facts} == {n}
-        assert {fact.b for fact in facts} == set(range(11))
+        times = [fact for fact in facts if fact.op == "×"]
+        assert {fact.a for fact in times} == {n}
+        assert {fact.b for fact in times} == set(range(11))
+        divided = [fact for fact in facts if fact.op == "÷"]
+        assert {fact.b for fact in divided} == {n}
+        assert {fact.result for fact in divided} == set(range(1, 11))
 
 
 # --- the route drawn on a miss ----------------------------------------------
@@ -172,9 +179,10 @@ def test_division_hops_count_the_answer():
 
 def test_no_division_by_nought():
     """`0 ÷ ? = 0` is true of every divisor, so the pair is not askable."""
-    for level_id in ("divide_two", "divide_five", "divide_ten"):
+    for level_id in TABLES:
         for fact in LEVELS_BY_ID[level_id].facts:
-            assert fact.a > 0 and fact.b > 0 and fact.result > 0, fact.key
+            if fact.op == "÷":
+                assert fact.a > 0 and fact.b > 0 and fact.result > 0, fact.key
 
 
 def test_a_bridging_fact_stops_at_ten():
@@ -208,7 +216,9 @@ def test_a_bond_is_drawn_whole():
 
 
 def test_times_facts_are_equal_hops():
-    for fact in LEVELS_BY_ID["fives_times"].facts:
+    for fact in LEVELS_BY_ID["table_5"].facts:
+        if fact.op != "×":
+            continue
         strategy = fact.strategy
         assert strategy.start == 0
         assert strategy.jumps == (fact.a,) * fact.b, fact.key

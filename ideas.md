@@ -37,19 +37,28 @@ the one a right/wrong count cannot see.
   is a new mental move to teach and `12 + 3` needs the single-hop picture
   regardless. Watch him read one first.
 - **The rest of the times tables** — 3s, 4s, 6s, 7s, 8s, 9s, and their divisions.
-  `_times` and `_divided` already generate them from a single number, so the
-  content is free; the cost is entirely the level screen, which is full at twelve
-  cards. `3.OA.C.7` names fluency within 100 by the end of grade 3 and three of
-  the nine tables are lit, so this is the largest curricular gap that costs no
-  new mechanic at all — only a layout decision.
+  **Built**, and the entry was right that the content was free and the cost was
+  the level screen. What it did not predict is that the layout decision decided
+  the *content model*: nine tables in two operations is eighteen cards for a
+  grid that holds fourteen, so per-table granularity was only reachable by
+  making a card a table rather than an operation. `_family` is that — one
+  number, both operations, forty-two facts — which turns out to be `3.OA.C.7`'s
+  own framing (the ×/÷ connection, grade 3 lesson 5) and interleaving on the
+  same card rather than a compromise. It cost six level ids: `twos` and its
+  five siblings named half-pools, and a level id keys a `LevelRecord`, so the
+  new cards are `table_2` … `table_10` and the old records sit unread. The
+  screen went to four rows and is now full but for two slots in the addition
+  column.
 - Two-digit addition/subtraction without regrouping (34+25, 68−43).
 - Two-digit **with** regrouping (37+28, 62−45) — the genuinely hard one. Typed
   answers plus mental carrying may need scratch paper; watch him before building.
-- Multiplication via skip counting by fives and tens. **Built** — `twos`,
-  `fives_times` and `tens_times`, plus an `everything` pool derived from every
-  other level's facts.
-- **Division.** **Built** — `divide_two`, `divide_five`, `divide_ten`, and the
-  column is lit. The original entry called it "a content decision (how far the
+- Multiplication via skip counting by fives and tens. **Built** — first as
+  `twos`, `fives_times` and `tens_times`, now folded into `table_2`, `table_5`
+  and `table_10` beside their divisions, plus an `everything` pool derived from
+  every other level's facts.
+- **Division.** **Built** — first as `divide_two`, `divide_five` and
+  `divide_ten` in a column of their own, and now as half of each table's card.
+  The original entry called it "a content decision (how far the
   tables go, whether remainders exist) and not a code one", and it was wrong
   about the second half in one specific way worth keeping: every fact until now
   landed on its own answer, and a division fact does not. `12 ÷ 2` draws six

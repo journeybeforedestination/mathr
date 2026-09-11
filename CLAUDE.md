@@ -72,7 +72,7 @@ One direction only: `shell/` → `storage.py` → `domain/`. Never the reverse.
 src/mathr/
   __init__.py     main(): mixer pre_init, pygame.init, App(...).run()
   domain/
-    facts.py      Fact, Question, Strategy, Level, the eight enumerated pools,
+    facts.py      Fact, Question, Strategy, Level, the eleven enumerated pools,
                   Side / Sentence / sentences: the code panel's derived deck,
                   SPAN / Target / targets and the six fraction pools
     round.py      Round, Rules, Tally, Aim, Outcome,
@@ -120,13 +120,24 @@ symptom is a card asking questions the card below it is for. `big` holds
 regrouping, which is a different skill and is in `ideas.md`.
 
 A times pair yields two questions (`a×b=?`, `a×?=c`); the other two are
-division, and they live in their own column via `_divide_pair`, which `_divided`
-draws from `range(1, 11)` rather than `range(11)` — `0 ÷ ? = 0` is true of every
-divisor, so the zero pair would sit in the deck being marked wrong forever.
+division, and `_family` puts them on the same card via `_divide_pair`, which
+`_divided` draws from `range(1, 11)` rather than `range(11)` — `0 ÷ ? = 0` is
+true of every divisor, so the zero pair would sit in the deck being marked wrong
+forever.
 `_SMALL` leaves out `(0, 0)` for the same reason in the same spirit: `0 + 0 = ?`
 is a free mark that measures nothing and inflates the record. Zero *addends*
-stay. Pools are enumerated, not generated — 372 / 440 / 22 / 22 / 22 / 20 / 20 /
-20, and `everything` is their concatenation (938), pinned by `test_pool_sizes`.
+stay. Pools are enumerated, not generated — 372 / 440 and nine tables of 42
+(22 times facts and 20 divisions each), and `everything` is their concatenation
+(1190), pinned by `test_pool_sizes`.
+
+**A card is a table, not an operation.** `table_2` … `table_10` each hold both
+operations of one number, because `3 × 4 = 12` and `12 ÷ 3 = 4` are one triple —
+and because nine tables split by operation is eighteen cards for a grid that
+holds fourteen. The ids are new rather than inherited from the six times-only
+and division-only levels they replaced: a level id keys a `LevelRecord` in a
+file that outlives the code, so reusing `twos` for a pool twice its size would
+have gone on accruing `best_seconds` and `failures` under a changed meaning,
+with nothing to say so. The old records sit in `progress.json` unread.
 
 The fraction pools are enumerated the same way — 4 / 7 / 13 / 18 / 14, and
 `fractions` is their concatenation (56) — and they live in `FRACTION_LEVELS`,
@@ -626,13 +637,15 @@ picks it up because it is derived. Check the denominators against `SPAN` first �
 see the trap. Then place it: `FRACTIONS` in `app.py` is three columns and a tall
 card, and a fifth column is a layout decision. Update `test_fraction_pool_sizes`.
 
-**A new level.** Add a `Level` to `_ADDITION` or `_MULTIPLY` in
+**A new level.** Add a `Level` to `_ADDITION` or `_TABLES` in
 `domain/facts.py` with its pair list and `seconds_per_part`; `_pool` does the
 rest — pass `_sub_pair` for a pool of subtractions, since the default builds
-additions only — and `everything` picks it up because it is derived. Then place
-it: the level screen is four fixed columns of three (`COLUMN_X`, `ROW_Y`, `CARD`
-in `app.py`), so a fourth row needs a layout decision, not just an id in a
-tuple. The addition column has one free slot; the other two are full. Update
+additions only, and `_family` builds a whole table — and `everything` picks it
+up because it is derived. Then place it: the level screen is four fixed columns
+of four (`COLUMN_X`, `ROW_Y`, `CARD` in `app.py`), and it is now full apart from
+the addition column's two free slots. A fifth row ends at 896 on an 800-tall
+surface and a fifth column will not fit across 1280, so anything else is a
+layout decision — regrouping the cards — and not an id in a tuple. Update
 `test_pool_sizes` — the `everything` total moves too.
 
 **A sixth game mode. The maths has to *be* the reward.** Replay Booth was built

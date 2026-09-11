@@ -51,6 +51,11 @@ def test_every_side_is_a_number():
                 assert side.b > 0 and side.a % side.b == 0, line.filled
 
 
+#: The divisions of one table, on their own: a table's card holds its times
+#: facts too, and this shape needs a pool that can build nothing else.
+_DIVISIONS = tuple(fact for fact in LEVELS_BY_ID["table_2"].facts if fact.op == "÷")
+
+
 def test_a_decomposition_never_splits_off_nought():
     """`18 ÷ 2 = 0 + ?` is not a decomposition, it is the bare fact with a
     nought stuck on the front of it."""
@@ -59,7 +64,7 @@ def test_a_decomposition_never_splits_off_nought():
     # nothing but decompositions, so its deck isolates the shape.
     made = [
         line
-        for line in sentences(LEVELS_BY_ID["divide_two"].facts, random.Random(3), 60)
+        for line in sentences(_DIVISIONS, random.Random(3), 60)
         if line.right.op == "+"
     ]
     assert made

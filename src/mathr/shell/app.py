@@ -66,9 +66,11 @@ ROCKET_HEART = (draw.ROCKET_ORIGIN[0] + draw.BODY_X, draw.ROCKET_ORIGIN[1] + 300
 
 # --- the level screen -------------------------------------------------------
 # Four columns rather than a list: a fourth level would run the old single
-# column off the bottom of the 800-tall design surface.
+# column off the bottom of the 800-tall design surface. Four rows is what the
+# surface holds — a fifth would end at 896 — and a fifth column will not fit
+# across it, which is why a table is one card rather than two.
 COLUMN_X = tuple(64 + index * 294 for index in range(4))
-ROW_Y = (216, 356, 496)
+ROW_Y = (216, 356, 496, 636)
 CARD = (270, 120)
 
 
@@ -94,9 +96,16 @@ class LevelScreen:
         return self.cards[0].value
 
 
-def level_screen(columns, titles, tall: str | None = None, soon: str | None = None) -> LevelScreen:
+def level_screen(
+    columns,
+    titles,
+    tall: str | None = None,
+    under: str | None = None,
+    soon: str | None = None,
+) -> LevelScreen:
     """Columns of level ids, plus one double-height card in the column after
-    them — which is always the level that is every other level at once."""
+    them — which is always the level that is every other level at once — and,
+    below it, whatever did not fit in the columns."""
     cards = tuple(
         Button(
             pygame.Rect(COLUMN_X[column], ROW_Y[row], *CARD),
@@ -114,8 +123,16 @@ def level_screen(columns, titles, tall: str | None = None, soon: str | None = No
                 tall,
             ),
         )
+    if under is not None:
+        cards += (
+            Button(
+                pygame.Rect(COLUMN_X[len(columns)], ROW_Y[2], *CARD),
+                LEVELS_BY_ID[under].name,
+                under,
+            ),
+        )
     dark = (
-        (Button(pygame.Rect(COLUMN_X[len(columns)], ROW_Y[2], *CARD), soon, "soon"),)
+        (Button(pygame.Rect(COLUMN_X[len(columns)], ROW_Y[-1], *CARD), soon, "soon"),)
         if soon is not None
         else ()
     )
@@ -125,11 +142,16 @@ def level_screen(columns, titles, tall: str | None = None, soon: str | None = No
 ARITHMETIC = level_screen(
     (
         ("small", "big"),
-        ("twos", "fives_times", "tens_times"),
-        ("divide_two", "divide_five", "divide_ten"),
+        # A card is a table, not an operation: `3 × 4` and `12 ÷ 3` are one
+        # triple, and nine tables split by operation is eighteen cards for a
+        # grid that holds fourteen. The two columns carry one heading between
+        # them, so nine cards read as one list rather than two groups.
+        ("table_2", "table_3", "table_4", "table_5"),
+        ("table_6", "table_7", "table_8", "table_9"),
     ),
-    ("Addition", "Multiply", "Division", "Everything"),
+    ("Addition", "Tables", "Tables", "Everything"),
     tall="everything",
+    under="table_10",
     soon="Tricky Facts",
 )
 

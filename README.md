@@ -179,9 +179,9 @@ plain `7 + 6 = ?`, which is the question the other three cabinets already ask
 and is deliberately the rarest.
 
 *Everything* makes the best panel, because it can put `10 - 7` and `15 ÷ 5` on
-opposite sides of the same `=`. The division levels lean entirely on splitting —
-they have no two expressions sharing a value and nothing to commute — which is
-the reason that shape exists at all.
+opposite sides of the same `=`. A table card leans hardest on splitting, since
+`3 × 4` and `12 ÷ 3` are the same triple and there is little else to pair — which
+is the reason that shape exists at all.
 
 **A miss shows both sides at once**, over one shared span, with a line under it
 saying whether they landed together. One span on purpose: two lines each scaled
@@ -246,21 +246,16 @@ different name for it.
 |---|---|---|
 | **Ten and Below** | both numbers ten or less — `2 + 2`, `7 + 7`, `10 − 6`, `1 + ? = 5` | 4s a part |
 | **Above Ten** | one number past ten, up to 20 — `12 + 3`, `13 − 4`, `20 − 7` | 5s a part |
-| **Times Two** | `2 × 0` through `2 × 10`, both ways round | 5s a part |
-| **Times Five** | `5 × 0` through `5 × 10` | 5s a part |
-| **Times Ten** | `10 × 0` through `10 × 10` | 5s a part |
-| **Divide by Two** | `2 ÷ 2` through `20 ÷ 2`, both ways round | 5s a part |
-| **Divide by Five** | `5 ÷ 5` through `50 ÷ 5` | 5s a part |
-| **Divide by Ten** | `10 ÷ 10` through `100 ÷ 10` | 5s a part |
-| **Everything** | every fact above, 938 of them, shuffled together | 5s a part |
+| **Twos** … **Tens** | one table, nine cards: `3 × 0` through `3 × 10` and `3 ÷ 3` through `30 ÷ 3`, all four ways round | 5s a part |
+| **Everything** | every fact above, 1190 of them, shuffled together | 5s a part |
 
-The multiplication levels ask only `a × b = ?` and `a × ? = c`; the two forms
-that would complete the set are division, and they are their own column rather
-than two more questions inside *Times Two* — so a division level asks
-`12 ÷ 2 = ?` and `12 ÷ ? = 6` and nothing else. The tables stop at ten and there
-are no remainders. Nothing divides by nought: `0 ÷ ? = 0` is true of every
-divisor, so that pair is not askable and the division levels hold twenty facts
-where the times levels hold twenty-two.
+A table card asks all four forms of its triple — `3 × 4 = ?`, `3 × ? = 12`,
+`12 ÷ 3 = ?` and `12 ÷ ? = 4` — rather than splitting times and divide into two
+cards. That is the connection third grade teaches outright, and it is the only
+way nine tables fit on one screen. The tables stop at ten and there are no
+remainders. Nothing divides by nought: `0 ÷ ? = 0` is true of every divisor, so
+that pair is not askable, which is why a card holds twenty-two times facts and
+twenty divisions rather than twenty-two of each.
 
 Division is also the one operation whose answer is *not* where its number line
 ends. `12 ÷ 2` draws six hops of two and lands on 12 — the number already in the

@@ -467,7 +467,7 @@ def _times_pair(a: int, b: int) -> tuple[Fact, ...]:
     """The two questions a times fact answers.
 
     Sibling of `_add_pair` rather than a parameterization of it: the two forms
-    it leaves out are division, which lives in its own column.
+    it leaves out are division, which `_divide_pair` supplies beside it.
     """
     return (
         Fact(a, "×", b, a * b, "result"),
@@ -480,7 +480,8 @@ def _divide_pair(a: int, b: int) -> tuple[Fact, ...]:
     `_times_pair` leaves out.
 
     Both share one equation and therefore one route, the way a bond's two
-    subtraction forms do.
+    subtraction forms do — and both sit in the same level as the times pair
+    they invert. See `_family`.
     """
     total = a * b
     return (
@@ -556,8 +557,8 @@ _BIG_ADD = tuple(
     if (a > 10) != (b > 10) and a + b <= TEEN_MAX
 )
 
-#: `fives_times` and the rest cannot reuse the addition ids: a level id keys a
-#: LevelRecord in progress.json.
+#: A level id keys a LevelRecord in progress.json, so the addition ids are
+#: distinct from every other family's.
 _ADDITION: tuple[Level, ...] = (
     Level(
         "small",
@@ -574,18 +575,32 @@ _ADDITION: tuple[Level, ...] = (
     ),
 )
 
-_MULTIPLY: tuple[Level, ...] = (
-    Level("twos", "Times Two", _times(2), 5.0),
-    Level("fives_times", "Times Five", _times(5), 5.0),
-    Level("tens_times", "Times Ten", _times(10), 5.0),
-)
 
-#: Twenty facts a level rather than the times column's twenty-two: the zero
-#: pair is not askable as a division. See `_divided`.
-_DIVIDE: tuple[Level, ...] = (
-    Level("divide_two", "Divide by Two", _divided(2), 5.0),
-    Level("divide_five", "Divide by Five", _divided(5), 5.0),
-    Level("divide_ten", "Divide by Ten", _divided(10), 5.0),
+def _family(n: int) -> tuple[Fact, ...]:
+    """One table, both operations: forty-two facts, twenty-two of them times.
+
+    `3 × 4 = 12` and `12 ÷ 3 = 4` are one triple read two ways, and asking
+    them off the same card is the connection itself rather than a claim about
+    it. It is also what makes nine tables fit: a card per operation is
+    eighteen cards, and the level screen holds fourteen.
+    """
+    return _times(n) + _divided(n)
+
+
+#: Two through ten, one card each. The ids are new rather than inherited from
+#: the three times-only and three division-only levels these replace: `twos`
+#: named a pool half this size, and a level id keys a LevelRecord that outlives
+#: the code. The records under the old ids stay where they are.
+_TABLES: tuple[Level, ...] = (
+    Level("table_2", "Twos", _family(2), 5.0),
+    Level("table_3", "Threes", _family(3), 5.0),
+    Level("table_4", "Fours", _family(4), 5.0),
+    Level("table_5", "Fives", _family(5), 5.0),
+    Level("table_6", "Sixes", _family(6), 5.0),
+    Level("table_7", "Sevens", _family(7), 5.0),
+    Level("table_8", "Eights", _family(8), 5.0),
+    Level("table_9", "Nines", _family(9), 5.0),
+    Level("table_10", "Tens", _family(10), 5.0),
 )
 
 #: Derived, never hand-listed: a copied list drifts silently the moment a level
@@ -593,11 +608,11 @@ _DIVIDE: tuple[Level, ...] = (
 EVERYTHING = Level(
     "everything",
     "Everything",
-    tuple(fact for level in _ADDITION + _MULTIPLY + _DIVIDE for fact in level.facts),
+    tuple(fact for level in _ADDITION + _TABLES for fact in level.facts),
     5.0,
 )
 
-LEVELS: tuple[Level, ...] = _ADDITION + _MULTIPLY + _DIVIDE + (EVERYTHING,)
+LEVELS: tuple[Level, ...] = _ADDITION + _TABLES + (EVERYTHING,)
 
 
 def _targets(partitions: tuple[tuple[int, int], ...]) -> tuple[Target, ...]:
