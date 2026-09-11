@@ -214,9 +214,12 @@ equal parts:
 - **The stone stops exactly where he clicked.** There is no power meter and no
   wobble: an error that is partly motor would corrupt the one thing being
   measured.
-- **Near enough is half a tick gap** — near enough that no other tick is nearer.
-  So halves are forgiving and twelfths are tight, and nothing needs tuning per
-  level.
+- **Near enough is half a tick gap, up to a limit** — near enough that no other
+  tick is nearer, and never further out than a twelfth of the line. Twelfths are
+  tight and halves are forgiving without any tuning per level; the limit is what
+  stops *forgiving* meaning anything goes, since on a line with three marks on
+  it half a gap is half the line — a stone on the quarter mark used to score for
+  `1/2`.
 - **A stone in the house counts and stays on the ice.** Eight of them win the
   end. The stones piling up along the line are what carries the round, in place
   of the clock the other cabinets have. Two that land on the same mark — `1/2`

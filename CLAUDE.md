@@ -195,6 +195,7 @@ These are the dials, and they are meant to be turned after watching him play.
 | `RUNNER_HEIGHT` | `shell/draw.py` | 46 | the ball carrier, in design pixels |
 | `STRIPE_EVERY` | `shell/draw.py` | `None` | yard stripes, in yards; `None` is the bare line |
 | `SPAN` | `domain/facts.py` | 240 | the ice, in units; **see the trap below** |
+| `WIDEST` | `domain/facts.py` | 20 | the widest a stone may be and still count |
 | `STONES` | `domain/round.py` | 8 | stones in an end |
 | `STONE_LIVES` | `domain/round.py` | 3 | wide ones before the end is lost |
 | `SHEET` / `SHEET_EDGE` | `shell/draw.py` | rect / 80 | the ice, and the room outside the line for its labels |
@@ -209,12 +210,16 @@ changing twice. `test_clock.py` asserts the derivation rather than the literals
 under both rule sets, so changing a level's pace does not break the suite —
 changing `GRACE_PARTS`, `BANK_PARTS` or `BALL_FLIGHT` intentionally will.
 
-Curling has no dial for how forgiving a shot is, and that is deliberate:
-`Target.tolerance` is half a tick gap, derived from the partition. Halves are
-generous and twelfths are tight without a constant per level, and the rings
-drawn at it are the only thing on screen that says the shot got harder. If it
-turns out to be the wrong bar for him, the honest fix is the *denominators a
-level asks*, not a fudge factor over all of them.
+Curling has one dial for how forgiving a shot is, `WIDEST`, and it is a ceiling
+rather than a per-level setting. `Target.tolerance` is half a tick gap, derived
+from the partition, so twelfths are tight without a constant per level and the
+rings drawn at it are the only thing on screen that says the shot got harder.
+Half a gap alone says only *no other tick is nearer*, which on a three-mark line
+is half the whole line: `1/2` scored for a stone on the quarter mark, a fraction
+he can name and was not asked for. The cap binds at halves through fifths and
+nothing finer, so the gradient survives where it was doing work. It is one
+number for the mode rather than a dial per level on purpose — if the bar is
+still wrong for him, the next fix is the *denominators a level asks*.
 
 Tennis is harder than the rocket at the same level: no grace bank, no banking
 ahead. Raise `BALL_FLIGHT` before touching `seconds_per_part`, which would

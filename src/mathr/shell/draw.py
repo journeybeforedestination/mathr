@@ -1533,16 +1533,12 @@ def stone_rows(positions, span: int, radius: int = STONE_RADIUS) -> tuple[int, .
 def _house(surface, centre_x: int, line_y: int, spread: int) -> None:
     """The rings, exactly as wide as the shot is forgiving.
 
-    Ellipses rather than circles: at the easy denominators the tolerance is a
-    quarter of the whole line, and a circle that wide is taller than the sheet.
-    Squashed, it reads as a house seen from behind the hack, which is the view
-    the ice is already drawn in.
+    Circles, since `Target.tolerance` gained its cap: the widest house in the
+    game is now a fifth of the ice rather than half of it, so it fits between
+    the line and the top without being squashed into an ellipse to fit.
     """
-    tall = min(spread, SHEET.height // 2 - 14)
     for share, colour in ((1.0, HOUSE_BLUE), (0.6, INK), (0.3, HOUSE_RED)):
-        rings = pygame.Rect(0, 0, max(4, int(spread * 2 * share)), max(4, int(tall * 2 * share)))
-        rings.center = (centre_x, line_y)
-        pygame.draw.ellipse(surface, colour, rings)
+        pygame.draw.circle(surface, colour, (centre_x, line_y), max(2, int(spread * share)))
     pygame.draw.circle(surface, INK, (centre_x, line_y), 5)
 
 

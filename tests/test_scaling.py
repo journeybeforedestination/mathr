@@ -194,14 +194,17 @@ def test_a_click_off_the_ice_is_not_a_throw():
 
 
 def test_a_finer_partition_draws_a_smaller_house():
-    """The rings are the tolerance, so the shot visibly gets harder."""
+    """The rings are the tolerance, so the shot visibly gets harder — from
+    sixths down, which is where the tolerance is still half a tick gap. Sixths
+    and everything coarser draw the same house, because they share `WIDEST`."""
     from mathr.domain.facts import SPAN, Target
     from mathr.shell.draw import sheet_x
 
     def spread(target):
         return sheet_x(target.tolerance, SPAN) - sheet_x(0, SPAN)
 
-    assert spread(Target(1, 12, 12)) < spread(Target(1, 3, 3)) < spread(Target(1, 2, 2))
+    assert spread(Target(1, 12, 12)) < spread(Target(1, 8, 8)) < spread(Target(1, 6, 6))
+    assert spread(Target(1, 6, 6)) == spread(Target(1, 2, 2))
 
 
 def test_two_stones_on_one_mark_stand_in_a_column():

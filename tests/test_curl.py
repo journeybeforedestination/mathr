@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from mathr.domain.facts import LEVELS_BY_ID, SPAN, Target
+from mathr.domain.facts import LEVELS_BY_ID, SPAN, WIDEST, Target
 from mathr.domain.round import (
     CURLING,
     ROCKET,
@@ -99,11 +99,22 @@ def test_eight_in_the_house_win_the_end():
     assert round.launched and round.parts == STONES
 
 
-def test_the_tolerance_is_half_a_tick_gap_at_every_denominator():
-    for den, gap in ((2, 60), (6, 20), (12, 10)):
+def test_the_tolerance_is_half_a_tick_gap_where_that_is_inside_the_cap():
+    for den, gap in ((6, 20), (8, 15), (12, 10)):
         target = Target(1, den, den)
         assert target.tolerance == gap
         assert SPAN // den == gap * 2
+
+
+def test_a_quarter_is_not_a_half():
+    """The cap, named after what it stops. Half a tick gap says only that no
+    other tick is nearer, and on a line with three marks on it that is half the
+    line: `1/2` scored for a stone on the quarter mark, which is a fraction he
+    can name and was not asked for."""
+    half = Target(1, 2, 2)
+    assert abs(SPAN // 4 - half.value) > half.tolerance
+    for ticks in (2, 3, 4, 5):
+        assert Target(1, ticks, ticks).tolerance == WIDEST
 
 
 def test_a_finer_partition_is_a_tighter_shot():

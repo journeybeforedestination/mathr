@@ -8,6 +8,7 @@ from mathr.domain.facts import (
     LEVELS_BY_ID,
     SPAN,
     TEEN_MAX,
+    WIDEST,
     Question,
     Strategy,
     Target,
@@ -285,7 +286,11 @@ def test_the_span_keeps_every_tolerance_whole():
     assert not [d for d in denominators if SPAN % d or (SPAN // d) % 2]
     for level in FRACTION_LEVELS:
         for target in level.targets:
-            assert target.tolerance * 2 * target.ticks == SPAN
+            half_gap = SPAN // (2 * target.ticks)
+            assert half_gap * 2 * target.ticks == SPAN
+            # Half a gap where that is near enough, `WIDEST` where it is not:
+            # on a coarse line half a gap is most of the line. See `WIDEST`.
+            assert target.tolerance == min(half_gap, WIDEST)
 
 
 def test_a_route_is_hops_of_one_tick_and_lands_on_the_fraction():

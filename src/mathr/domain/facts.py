@@ -112,6 +112,16 @@ class Fact:
 #: that keeps the existing ones whole.
 SPAN = 240
 
+#: And the widest a shot may be and still count, whatever the line is ticked in.
+#: Half a tick gap alone says only *no other tick is nearer*, which on a line
+#: with three marks on it is half the line: `1/2` was scored for a stone on the
+#: quarter mark, because 60 units out is exactly half the gap and `place`
+#: compares with `<=`. A gap is how hard the mark is to *find*; this is how near
+#: he has to put it, and one number rather than a dial per level — the cap binds
+#: at halves through fifths and nothing finer, so the rings still shrink as the
+#: denominators grow.
+WIDEST = SPAN // 12
+
 
 @dataclass(frozen=True)
 class Target:
@@ -137,13 +147,14 @@ class Target:
 
     @property
     def tolerance(self) -> int:
-        """Half a tick gap: near enough that no other tick is nearer.
+        """Half a tick gap, but never wider than `WIDEST`.
 
-        Derived rather than a constant, so halves are forgiving and twelfths are
-        tight without a dial per level — and so the ring drawn at it is the only
-        thing on screen that says the shot got harder.
+        The gap half is derived rather than a constant, so twelfths are tight
+        without a dial per level — and the ring drawn at it is the only thing on
+        screen that says the shot got harder. The cap is what keeps *forgiving*
+        from meaning *unfalsifiable* on a coarse line: see `WIDEST`.
         """
-        return SPAN // (2 * self.ticks)
+        return min(SPAN // (2 * self.ticks), WIDEST)
 
     @property
     def prompt(self) -> str:
